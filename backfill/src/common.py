@@ -28,6 +28,12 @@ def require_env(*names: str) -> dict[str, str]:
     return {n: os.environ[n] for n in names}
 
 
+def semester_key(semester: str) -> tuple[int, int]:
+    """'2025-1' → (2025, 1). 학기 비교용."""
+    year, term = semester.split("-")
+    return int(year), int(term)
+
+
 def today() -> str:
     return datetime.now(KST).strftime("%Y-%m-%d")
 

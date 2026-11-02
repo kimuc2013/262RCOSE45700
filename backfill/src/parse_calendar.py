@@ -14,8 +14,8 @@ from bs4 import BeautifulSoup
 
 from collections import Counter
 
-from common import (CRAWL_STATE, DATA, RAW_HTML, REPORTS, now_iso, read_json, today, write_json,
-                    write_jsonl)
+from common import (CRAWL_STATE, DATA, RAW_HTML, REPORTS, load_sources, now_iso, read_json,
+                    semester_key, today, write_json, write_jsonl)
 
 WEEKDAYS = "월화수목금토일"
 # '11(수)', '3.2(월)' (월이 바뀌는 경우 대비) 형태의 날짜 하나
@@ -103,7 +103,9 @@ def parse_table(html: bytes, semester: str) -> list[dict]:
 
 def main():
     state = read_json(CRAWL_STATE, {})
-    cal_docs = {k: v for k, v in state.items() if v.get("kind") == "calendar" and v.get("ok")}
+    from_semester = load_sources()["calendar"].get("from_semester", "0-0")
+    cal_docs = {k: v for k, v in state.items() if v.get("kind") == "calendar" and v.get("ok")
+                and semester_key(v["semester"]) >= semester_key(from_semester)}
     if not cal_docs:
         print("학사일정 원문이 없음. 먼저 python src/crawl.py --only calendar 실행")
         return 1

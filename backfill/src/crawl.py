@@ -17,7 +17,7 @@ from urllib.robotparser import RobotFileParser
 
 from bs4 import BeautifulSoup
 
-from common import (CRAWL_STATE, RAW_HTML, REPORTS, Fetcher, load_sources,
+from common import (CRAWL_STATE, RAW_HTML, REPORTS, Fetcher, load_sources, semester_key,
                     now_iso, read_json, today, write_json)
 
 MIN_BODY_CHARS = 50          # 본문이 이보다 짧으면 빈 본문으로 보고 리포트에 올림
@@ -91,6 +91,8 @@ def calendar_targets(fetcher: Fetcher, base: str, cal: dict) -> list[tuple[str, 
     for opt in soup.select("select#sCateYear option"):
         year, term = opt["data-year"], opt["data-term"]
         if cal.get("semesters", "all") == "current" and not opt.has_attr("selected"):
+            continue
+        if cal.get("from_semester") and semester_key(f"{year}-{term}") < semester_key(cal["from_semester"]):
             continue
         targets.append((f"{year}-{term}", f"{url}?cYear={year}&hakGi={term}&srCategoryId1={opt['value']}"))
     return targets
