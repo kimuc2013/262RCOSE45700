@@ -1,0 +1,19 @@
+# 비공개 (GitHub 업로드 금지)
+.env
+CLAUDE.md
+
+# 원문·첨부 원본과 정제본: 저작권상 공개 저장소에 올리지 않음
+backfill/data/raw/
+backfill/data/clean/
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# 에디터·OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
