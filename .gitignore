@@ -7,6 +7,9 @@ backfill/data/raw/
 backfill/data/extracted/
 backfill/data/clean/
 
+# 단계별 실행 기록: 실행할 때마다 쌓이는 로컬 기록이라 올리지 않음
+backfill/data/reports/
+
 # Python
 .venv/
 venv/
