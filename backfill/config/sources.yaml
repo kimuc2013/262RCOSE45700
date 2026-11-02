@@ -23,6 +23,15 @@ calendar:
   recrawl: weekly
   semesters: all        # all: 선택 목록의 모든 학기 / current: 기본 표시 학기만
 
+# VLM(Qwen3-VL)으로 읽을 이미지 (2026-11-02 결정: 이것만 읽음, 나머지 이미지는 제목·링크만)
+# 결과는 data/raw/vlm/에 저장해 이미지가 바뀌지 않으면 다시 호출하지 않음
+vlm_images:
+  - src: https://registrar.korea.ac.kr/_res/eduinfo/img/program/img_program_map(kor).png
+    prompt: |
+      이 이미지는 고려대학교 교환학생 프로그램 페이지의 '주요협정국가 및 대학 현황 지도'입니다.
+      이미지에 적힌 글자를 빠짐없이 그대로 옮겨 적으세요. 지역 이름을 소제목으로, 그 아래 대학 이름을 한 줄에 하나씩 '- '로 적으세요.
+      이미지에 없는 내용(국기로 짐작한 나라 이름 등)은 추가하지 마세요. 설명이나 요약은 쓰지 마세요.
+
 # 첨부: 페이지에 걸린 첨부 중 받지 않을 것 (주소에 이 문자열이 들어 있으면 제외)
 attachments:
   exclude_url_contains:

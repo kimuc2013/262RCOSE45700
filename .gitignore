@@ -4,6 +4,7 @@ CLAUDE.md
 
 # 원문·첨부 원본과 정제본: 저작권상 공개 저장소에 올리지 않음
 backfill/data/raw/
+backfill/data/extracted/
 backfill/data/clean/
 
 # Python

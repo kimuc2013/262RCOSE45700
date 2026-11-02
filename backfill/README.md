@@ -18,8 +18,8 @@ python -m venv .venv                                  # 저장소 루트에서
 | `BGE_MODEL` | | `furiosa-ai/bge-m3` | 임베딩 모델 |
 | `BGE_REVISION` | | `v2026.4` | 모델 revision (manifest.json에 기록) |
 | `EMBED_BATCH_SIZE` | | `32` | 한 요청에 묶어 보낼 문장 수. 세 조가 함께 쓰는 서버라 배치로 보냄 |
-| `QWEN_BASE_URL` | VLM 사용 시 | 없음 | 이미지 첨부를 읽을 멀티모달 모델 API 주소 |
-| `QWEN_VLM_MODEL` | | `Qwen3-VL-32B-Instruct` | 멀티모달 모델 |
+| `QWEN_BASE_URL` | VLM 사용 시 | 없음 | 이미지를 읽을 멀티모달 모델 API 주소 (`sources.yaml`의 `vlm_images`만 읽음) |
+| `QWEN_VLM_MODEL` | | `furiosa-ai/Qwen3-VL-32B-Instruct` | 멀티모달 모델 (`furiosa-ai/` 포함해야 함) |
 | `FURIOSA_API_KEY` | VLM 사용 시 | 없음 | Qwen API 키 |
 | `DATA_DIR` | | `data` | 데이터 폴더 (`backfill/` 기준) |
 | `USER_AGENT` | | `KU-AcademicInfo-MCP-Backfill/0.1 (student project)` | 크롤러 User-Agent |
@@ -33,4 +33,6 @@ python -m venv .venv                                  # 저장소 루트에서
 ../.venv/Scripts/python src/crawl.py              # 1단계 크롤링 (--only calendar | pages)
 ../.venv/Scripts/python src/parse_calendar.py     # 학사일정 → data/calendar.jsonl
 ../.venv/Scripts/python src/fetch_attachments.py  # 2단계 첨부 받기 (바뀌지 않은 파일은 다시 받지 않음)
+../.venv/Scripts/python src/extract.py            # 3단계 텍스트 추출 → data/extracted/{doc_id}.json, 미리보기 .md
+../.venv/Scripts/python src/clean.py              # 4단계 정제 → data/clean/{doc_id}.json, 미리보기 .md
 ```
