@@ -32,4 +32,5 @@ python -m venv .venv                                  # 저장소 루트에서
 ```
 ../.venv/Scripts/python src/crawl.py              # 1단계 크롤링 (--only calendar | pages)
 ../.venv/Scripts/python src/parse_calendar.py     # 학사일정 → data/calendar.jsonl
+../.venv/Scripts/python src/fetch_attachments.py  # 2단계 첨부 받기 (바뀌지 않은 파일은 다시 받지 않음)
 ```

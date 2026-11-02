@@ -23,6 +23,37 @@ calendar:
   recrawl: weekly
   semesters: all        # all: 선택 목록의 모든 학기 / current: 기본 표시 학기만
 
+# 첨부: 페이지에 걸린 첨부 중 받지 않을 것 (주소에 이 문자열이 들어 있으면 제외)
+attachments:
+  exclude_url_contains:
+    - "_sejong_"        # 수강신청 단과대학별 유의사항 중 세종캠퍼스 PDF 7개
+
+  # 첨부별 scope (파일명: scope). 여기 없는 첨부는 걸린 페이지의 scope를 따름
+  # 수강신청 단과대학별 유의사항 PDF: 단과대 전용 자료라 단과대 이름으로 구분 (2026-11-02 결정)
+  # 교직은 사범대학, 학부대학(교양)·현장실습지원센터는 모든 학부생 대상이라 공통
+  scope:
+    info_caution_cultural.pdf: 공통             # 학부대학(구 교양교육원)
+    info_caution_field.pdf: 공통                # 현장실습지원센터
+    info_caution_teaching.pdf: 사범대학         # 교직
+    info_caution_business.pdf: 경영대학
+    info_caution_liberal.pdf: 문과대학
+    info_caution_life.pdf: 생명과학대학
+    info_caution_political.pdf: 정경대학
+    info_caution_science.pdf: 이과대학
+    info_caution_engineering.pdf: 공과대학
+    info_caution_medicine.pdf: 의과대학
+    info_caution_education.pdf: 사범대학
+    info_caution_nursing.pdf: 간호대학
+    info_caution_info.pdf: 정보대학
+    info_caution_design.pdf: 디자인조형학부
+    info_caution_international.pdf: 국제대학
+    info_caution_media.pdf: 미디어대학
+    info_caution_health.pdf: 보건과학대학
+    info_caution_security.pdf: 스마트보안학부
+    info_caution_psychology.pdf: 심리학부
+    info_caution_mobility.pdf: 스마트모빌리티학부
+    info_caution_interdisciplinary.pdf: 자유전공학부
+
 pages:
   # ── 학사행정 ─────────────────────────────
   - {doc_id: leave_normal,        path: /eduinfo/affairs/leave_normal.do,        category: 학사행정}
