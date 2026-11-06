@@ -1,0 +1,30 @@
+name: ku-academic-mcp
+services:
+  mcp:
+    image: ku-academic-mcp:local
+    build: .
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      ACADEMIC_DB: /data/academic.sqlite3
+      MODEL_MODE: ${MODEL_MODE:-local}
+      MODEL_BASE_URL: ${MODEL_BASE_URL:-http://host.docker.internal:9000}
+      MODEL_API_KEY: ${MODEL_API_KEY:-}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
+      REWRITE_MODEL: ${REWRITE_MODEL:-}
+      RERANK_MODEL: ${RERANK_MODEL:-}
+      RERANK_PATH: ${RERANK_PATH:-/v1/rerank}
+      MODEL_TIMEOUT_SECONDS: ${MODEL_TIMEOUT_SECONDS:-15}
+      RERANK_MIN_SCORE: ${RERANK_MIN_SCORE:-}
+      SERVING_MAX_RUNNING: ${SERVING_MAX_RUNNING:-4}
+      SERVING_MAX_QUEUED: ${SERVING_MAX_QUEUED:-8}
+      SERVING_MAX_WAITERS: ${SERVING_MAX_WAITERS:-64}
+      SERVING_REQUEST_TIMEOUT: ${SERVING_REQUEST_TIMEOUT:-10}
+      SERVING_QUEUE_TIMEOUT: ${SERVING_QUEUE_TIMEOUT:-1}
+      SERVING_MODEL_REVISION: ${SERVING_MODEL_REVISION:-unversioned}
+    volumes:
+      - academic-data:/data
+      - ../keynote/sample:/samples:ro
+    restart: unless-stopped
+volumes:
+  academic-data:

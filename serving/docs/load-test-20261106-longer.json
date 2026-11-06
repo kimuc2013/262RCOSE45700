@@ -1,0 +1,109 @@
+{
+  "timestamp_utc": "2026-11-06T04:59:12.733157+00:00",
+  "python": "3.14.4",
+  "platform": "macOS-26.5.1-arm64-arm-64bit-Mach-O",
+  "scope": "isolated local sample, no model API",
+  "method": "closed-loop independent MCP sessions; setup/warmup excluded; latency includes client/HTTP; all-response percentiles include errors",
+  "server_defaults": {
+    "running": 4,
+    "queued": 8,
+    "callers": 64,
+    "request_timeout_s": 10
+  },
+  "cases": [
+    {
+      "scenario": "warm_shared",
+      "concurrency": 8,
+      "requests": 2000,
+      "successes": 2000,
+      "errors": {},
+      "statuses": {
+        "found": 2000
+      },
+      "elapsed_s": 18.049,
+      "completed_rps": 110.81,
+      "successful_rps": 110.81,
+      "p50_ms": 64.512,
+      "p95_ms": 131.523,
+      "p99_ms": 167.35,
+      "success_p95_ms": 131.523,
+      "queue_p95_ms": 0,
+      "cache_hit": 2000,
+      "coalesced": 0,
+      "cache_fast_path": 2000,
+      "model_calls": 0
+    },
+    {
+      "scenario": "cold_shared",
+      "concurrency": 8,
+      "requests": 2000,
+      "successes": 2000,
+      "errors": {},
+      "statuses": {
+        "found": 2000
+      },
+      "elapsed_s": 10.315,
+      "completed_rps": 193.89,
+      "successful_rps": 193.89,
+      "p50_ms": 36.463,
+      "p95_ms": 81.796,
+      "p99_ms": 114.888,
+      "success_p95_ms": 81.796,
+      "queue_p95_ms": 0,
+      "cache_hit": 1992,
+      "coalesced": 7,
+      "cache_fast_path": 1992,
+      "model_calls": 0
+    },
+    {
+      "scenario": "cold_unique",
+      "concurrency": 8,
+      "requests": 2000,
+      "successes": 2000,
+      "errors": {},
+      "statuses": {
+        "found": 2000
+      },
+      "elapsed_s": 14.349,
+      "completed_rps": 139.38,
+      "successful_rps": 139.38,
+      "p50_ms": 43.534,
+      "p95_ms": 139.432,
+      "p99_ms": 188.81,
+      "success_p95_ms": 139.432,
+      "queue_p95_ms": 7.545,
+      "cache_hit": 0,
+      "coalesced": 0,
+      "cache_fast_path": 0,
+      "model_calls": 0
+    },
+    {
+      "scenario": "calendar",
+      "concurrency": 8,
+      "requests": 2000,
+      "successes": 2000,
+      "errors": {},
+      "statuses": {
+        "found": 2000
+      },
+      "elapsed_s": 17.954,
+      "completed_rps": 111.4,
+      "successful_rps": 111.4,
+      "p50_ms": 62.918,
+      "p95_ms": 141.551,
+      "p99_ms": 230.717,
+      "success_p95_ms": 141.551,
+      "queue_p95_ms": 0.079,
+      "cache_hit": 0,
+      "coalesced": 1406,
+      "cache_fast_path": 0,
+      "model_calls": 0
+    }
+  ],
+  "sample": {
+    "changed": true,
+    "revision": "40a6459aae5acb5e1ad5b9beb2f1267ee60017ff43338ea2a6570a8d334ac781",
+    "chunks": 9,
+    "events": 43
+  }
+}

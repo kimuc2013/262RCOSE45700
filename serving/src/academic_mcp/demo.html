@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>고려대 학사정보 MCP | 로컬 MVP</title>
+<style>
+:root{color-scheme:light;--bg:#f5f5f4;--paper:#fff;--text:#18181b;--muted:#64646e;--line:#e4e4e7;--brand:#861c30;--ok:#166534}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.65 -apple-system,BlinkMacSystemFont,'Apple SD Gothic Neo',sans-serif}main{max-width:1180px;padding:40px 28px;margin:auto}header{display:flex;align-items:center;justify-content:space-between;gap:20px}h1{font-size:32px;letter-spacing:-1px;margin:8px 0}h2{font-size:21px;margin:0 0 16px}p{margin:0 0 16px}.eyebrow{font-size:12px;letter-spacing:2px;color:var(--brand);font-weight:700}.tag{font-size:13px;color:var(--ok);border:1px solid #bbd4c1;border-radius:30px;padding:6px 13px;background:#f0f9f2}.sub,.muted{color:var(--muted)}.notice{margin:22px 0;padding:14px 18px;background:#ececec;border-radius:10px;font-size:14px}.layout{display:grid;grid-template-columns:340px 1fr;gap:24px;align-items:start}.panel{border:1px solid var(--line);background:var(--paper);border-radius:16px;padding:24px}.examples{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:22px}button,input,select,textarea{font:inherit}button{cursor:pointer;border:1px solid var(--line);border-radius:8px;padding:8px 12px;background:white;color:var(--text)}button:hover{background:#f4f4f5}button:disabled{opacity:.5;cursor:wait}label{font-size:14px;display:block;margin:16px 0 6px;font-weight:600}input,select,textarea{width:100%;padding:10px;border:1px solid #d4d4d8;border-radius:8px;background:white}textarea{min-height:105px;resize:vertical}button.primary{background:var(--brand);color:white;border-color:var(--brand);width:100%;margin-top:20px;padding:12px}button.batch{width:100%;margin-top:9px;font-size:14px}.hint{font-size:13px;color:var(--muted);margin-top:12px}.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:20px}.metric{border:1px solid var(--line);border-radius:10px;padding:12px}.metric small{display:block;color:var(--muted);font-size:12px}.metric b{font-size:19px}.evidence{border-top:1px solid var(--line);padding:16px 0}.evidence h3{font-size:17px;margin:0 0 8px}.evidence a{font-size:13px;color:var(--brand);overflow-wrap:anywhere}.evidence p{white-space:pre-wrap;font-size:15px;margin:8px 0}.warning{color:#854d0e;background:#fef9e8;border-radius:8px;padding:12px;font-size:14px;margin-bottom:16px}#state{font-size:14px;color:var(--muted);margin-bottom:12px}#batchResult{font-size:14px;margin-bottom:16px}details{margin-top:16px}summary{cursor:pointer;font-size:14px}pre{overflow:auto;background:#f4f4f5;padding:14px;border-radius:8px;font-size:12px;max-height:380px}.empty{padding:40px 12px;text-align:center;color:var(--muted)}footer{font-size:12px;color:var(--muted);margin-top:26px}@media(max-width:800px){main{padding:22px 14px}.layout{grid-template-columns:1fr}h1{font-size:27px}.metrics{grid-template-columns:1fr 1fr}header{align-items:start}.panel{padding:18px}}
+</style></head><body><main>
+<header><div><div class="eyebrow">TEAM 7 / LOCAL DEVELOPMENT</div><h1>고려대 학사정보 MCP</h1><p class="sub">질문을 보내고, 서버가 돌려주는 공식 근거를 확인하세요.</p></div><span class="tag">AWS 없이 로컬 실행</span></header>
+<div class="notice">샘플: 2026-10-18 수집, 학사일정 43건과 이중전공 청크 9개. CPU의 BM25 검색으로 동작합니다. NPU와 답변 생성 LLM은 연결하지 않았습니다.</div>
+<div class="layout"><section class="panel"><h2>요청 보내기</h2>
+<div class="examples"><button data-example="calendar">신청 기간</button><button data-example="eligibility">신청자격</button><button data-example="unknown">합격컷</button><button data-example="private">내 성적</button></div>
+<label for="tool">MCP 도구</label><select id="tool"><option value="get_academic_calendar">학사일정 조회</option><option value="search_academic_info">학사정보 검색</option></select>
+<label for="semester">학기</label><input id="semester" value="2026-2" placeholder="2026-2">
+<label id="queryLabel" for="query">일정 이름</label><textarea id="query">이중전공</textarea>
+<button id="send" class="primary">서버에 요청하기</button><button id="batch" class="batch">같은 요청 10개 동시에 보내기</button>
+<p class="hint">같은 검색 질문을 다시 보내면 캐시 적중을 볼 수 있습니다. 동시 요청은 실제 처리 타이밍에 따라 병합되거나 캐시에서 처리됩니다.</p>
+</section><section class="panel" aria-live="polite"><h2>서버 응답</h2><div id="state">아직 요청을 보내지 않았습니다.</div><div id="metrics" class="metrics"></div><div id="batchResult"></div><div id="result" class="empty">왼쪽 예시를 선택한 뒤 요청해 보세요.</div><details id="rawDetails" hidden><summary>실제 MCP 응답 JSON</summary><pre id="raw"></pre></details></section></div>
+<footer>이 화면은 서빙 동작을 확인하는 개발용 클라이언트입니다. 날짜와 문단은 실제 MCP 도구 응답이며, 새로운 수집이나 온라인 배포는 수행하지 않습니다.</footer>
+</main><script>
+const $=id=>document.getElementById(id),statusNames={found:'근거 확인',insufficient_evidence:'근거 부족',login_required:'로그인 필요',out_of_scope:'범위 밖'};
+const examples={calendar:['get_academic_calendar','이중전공'],eligibility:['search_academic_info','이중전공 신청자격은?'],unknown:['search_academic_info','이중전공 합격컷 알려줘'],private:['search_academic_info','내 성적 알려줘']};
+function setTool(){ $('queryLabel').textContent=$('tool').value==='get_academic_calendar'?'일정 이름':'질문'; }
+$('tool').onchange=setTool;
+document.querySelectorAll('[data-example]').forEach(button=>button.onclick=()=>{const e=examples[button.dataset.example];$('tool').value=e[0];$('query').value=e[1];setTool();});
+function element(tag,text,cls){const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e;}
+function metric(label,value){const e=element('div',undefined,'metric');e.append(element('small',label),element('b',value));$('metrics').append(e);}
+function source(url,parent){try{const u=new URL(url);if(u.protocol!=='https:')return;const a=element('a','공식 원문 열기');a.href=u.href;a.target='_blank';a.rel='noopener noreferrer';parent.append(a);}catch{}}
+async function run(count){
+ $('send').disabled=$('batch').disabled=true;$('state').textContent='MCP 서버 호출 중…';$('metrics').replaceChildren();$('batchResult').replaceChildren();$('result').className='';$('result').replaceChildren();$('rawDetails').hidden=true;
+ try{
+  const tool=$('tool').value,semester=$('semester').value.trim(),query=$('query').value.trim();
+  const args=tool==='get_academic_calendar'?{semester,keyword:query}:{query,...(semester?{semester}:{})};
+  const response=await fetch('/api/call',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tool,arguments:args,count})});
+  const body=await response.json();if(!response.ok)throw Error(body.error||'요청 실패');
+  $('rawDetails').hidden=false;$('raw').textContent=JSON.stringify(body,null,2);
+  if(count===10){const valid=body.results.filter(r=>!r.isError).map(r=>r.data),errors=body.results.filter(r=>r.isError),merged=valid.filter(d=>d.metrics?.coalesced).length,cached=valid.filter(d=>d.cache_hit).length;$('batchResult').textContent=`10건 중 완료 ${valid.length}건, 실패 ${errors.length}건, 진행 중 작업 공유 ${merged}건, 캐시 적중 ${cached}건`;if(errors.length)$('result').append(element('p',errors[0].message,'warning'));}
+  const first=body.results.find(r=>!r.isError)||body.results[0];if(first.isError)throw Error(first.message);
+  const d=first.data,m=d.metrics||{};$('state').textContent='실제 MCP 도구 호출 완료';
+  metric('상태',statusNames[d.status]||d.status);metric('캐시',d.cache_hit?'적중':'미적중');metric('서버 처리 시간',m.latency_ms===undefined?'확인 불가':m.latency_ms.toFixed(2)+' ms');
+  if(d.freshness_warning)$('result').append(element('div','수집 후 시간이 지난 자료입니다. 실제 신청 전 공식 원문의 최신 공지를 확인하세요.','warning'));
+  if(d.message)$('result').append(element('p',d.message));
+  if(d.status==='insufficient_evidence'&&d.evidence.length)$('result').append(element('p','아래는 검색 후보입니다. 확정 답변 근거로 판정된 결과가 아닙니다.','muted'));
+  for(const event of d.events||[]){const c=element('article',undefined,'evidence');c.append(element('h3',event.name),element('p',`${event.start} ~ ${event.end}`),element('p',`학기 ${event.semester} / 수집일 ${event.collected_at}`,'muted'));source(event.source,c);$('result').append(c);}
+  for(const item of d.evidence||[]){const c=element('article',undefined,'evidence');c.append(element('h3',item.section),element('p',item.text),element('p',`${item.doc_title} / 수집일 ${item.collected_at}`,'muted'));source(item.url,c);$('result').append(c);}
+ }catch(error){$('state').textContent='요청 실패';$('result').append(element('p',error.message,'warning'));}
+ finally{$('send').disabled=$('batch').disabled=false;}
+}
+$('send').onclick=()=>run(1);$('batch').onclick=()=>run(10);
+</script></body></html>
