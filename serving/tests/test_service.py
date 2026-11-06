@@ -9,7 +9,7 @@ from academic_mcp.ingest import ingest
 from academic_mcp.service import AcademicService
 from academic_mcp.store import Store
 
-SAMPLES = Path(__file__).resolve().parents[2] / 'keynote' / 'sample'
+SAMPLES = Path(__file__).resolve().parents[1] / 'sample'
 
 
 @pytest.fixture

@@ -8,7 +8,7 @@
 
 ```bash
 uv sync --frozen --extra dev
-uv run academic-data --samples ../keynote/sample
+uv run academic-data --samples ./sample
 uv run academic-mcp --transport streamable-http
 ```
 

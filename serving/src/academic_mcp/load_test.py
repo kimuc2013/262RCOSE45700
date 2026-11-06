@@ -115,7 +115,7 @@ async def run(args, url):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--url', help='Existing authorized MCP server; otherwise start an isolated local sample server')
-    parser.add_argument('--samples', type=Path, default=Path('../keynote/sample'))
+    parser.add_argument('--samples', type=Path, default=Path('./sample'))
     parser.add_argument('--concurrency', type=int, nargs='+', default=[1, 8, 32, 96])
     parser.add_argument('--requests', type=int, default=192, help='Requests per scenario and concurrency')
     parser.add_argument('--timeout', type=float, default=20)

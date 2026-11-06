@@ -1,4 +1,4 @@
-"""Offline ingestion, with no changes to keynote samples and no network calls."""
+"""Offline ingestion, with no changes to source samples and no network calls."""
 import argparse
 import json
 import re

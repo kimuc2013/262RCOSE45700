@@ -24,7 +24,7 @@ services:
       SERVING_MODEL_REVISION: ${SERVING_MODEL_REVISION:-unversioned}
     volumes:
       - academic-data:/data
-      - ../keynote/sample:/samples:ro
+      - ./sample:/samples:ro
     restart: unless-stopped
 volumes:
   academic-data:

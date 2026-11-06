@@ -9,7 +9,7 @@
 - `serving/`: MCP 서버, 일정 조회, 캐시, 요청 병합, 동시성 및 시간 예산 제어
 - `serving/tests/`: 회귀 검사와 실제 MCP HTTP 동시 호출 검사
 - `serving/docs/`: 구현 범위, 인터페이스 초안, 검증 및 로컬 부하테스트 결과
-- `keynote/sample/`: 기존 공개 학사자료 샘플. 전체 백필 데이터가 아닙니다.
+- `serving/sample/`: 기존 공개 학사자료 샘플. 전체 백필 데이터가 아닙니다.
 
 모델 및 백필 담당의 모듈은 아직 통합하지 않았습니다. 로컬 검색은 BM25 기준선과 일부 샘플 질문의 데모 규칙이며 일반 검색 품질 평가 결과가 아닙니다. 실제 모델 API, 유사도 캐시, 인증 기반 유저별 제한과 여러 프로세스 간 공유 제어는 미완료입니다.
 
@@ -20,7 +20,7 @@ Python 3.12 이상과 uv를 사용합니다.
 ```bash
 cd serving
 uv sync --frozen --extra dev
-uv run academic-data --samples ../keynote/sample
+uv run academic-data --samples ./sample
 uv run academic-mcp --transport streamable-http
 ```
 
