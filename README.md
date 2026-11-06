@@ -58,3 +58,7 @@ docker compose exec -T mcp python -m academic_mcp.terminal_demo --url http://127
 기능은 별도 브랜치에서 작업하고 테스트 후 main으로 합칩니다. 실제 `.env`, SSH 개인키, AWS 자격 증명, 로컬 DB는 커밋하지 않습니다. `.env.example`만 공유하며 모델 및 데이터 인터페이스 변경 시 담당자 간 계약과 문서를 함께 갱신합니다.
 
 서빙 상세 실행 및 한계는 [serving/README.md](serving/README.md), 최신 검증 기록은 [VALIDATION.md](serving/docs/VALIDATION.md)를 참고하세요.
+
+## 자동 배포
+
+GitHub Actions가 PR과 main 변경에서 테스트 및 컨테이너 빌드를 실행합니다. AWS SSM과 OIDC 준비 후 `DEPLOY_ENABLED=true`를 설정하면 main 병합 시 EC2 배포와 MCP 검사까지 실행합니다. 배포 변수 미설정 시 deploy job은 건너뜁니다. 실제 활성화 조건과 관리자 요청 정책은 [배포 문서](serving/docs/DEPLOYMENT.md)를 참고하세요.

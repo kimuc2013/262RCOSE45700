@@ -30,6 +30,8 @@ def test_streamable_http_roundtrip(tmp_path, monkeypatch):
                     await task
                 await asyncio.sleep(0.01)
             assert server.started
+            from academic_mcp.smoke import check
+            await check(f'http://127.0.0.1:{port}/mcp')
             async with streamable_http_client(f'http://127.0.0.1:{port}/mcp') as (read, write, _):
                 async with ClientSession(read, write) as session:
                     await session.initialize()
