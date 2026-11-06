@@ -1,0 +1,55 @@
+name: Serving CI and EC2 deployment
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: serving-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --frozen --extra dev
+        working-directory: serving
+      - run: uv run pytest -q
+        working-directory: serving
+      - name: Verify container build
+        run: docker build -t ku-academic-mcp:ci serving
+  deploy:
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && vars.DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate deployment settings
+        env:
+          ROLE: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          REGION: ${{ vars.AWS_REGION }}
+          INSTANCE: ${{ vars.EC2_INSTANCE_ID }}
+        run: |
+          test -n "$ROLE" && test -n "$REGION" && test -n "$INSTANCE"
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: ku-mcp-deploy-${{ github.run_id }}
+      - name: Deploy tested commit through SSM and wait for health check
+        env:
+          INSTANCE: ${{ vars.EC2_INSTANCE_ID }}
+          REGION: ${{ vars.AWS_REGION }}
+        run: python3 serving/deploy/send_ssm.py --instance "$INSTANCE" --region "$REGION" --sha "$GITHUB_SHA"
