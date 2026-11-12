@@ -4,13 +4,15 @@
 
 ## 실행 준비
 
-```
-python -m venv .venv                                  # 저장소 루트에서
-.venv/Scripts/python -m pip install -r backfill/requirements.txt
+Python 3.12 이상과 uv를 사용한다 (서빙과 같은 환경). 의존성 버전은 `uv.lock`에 고정되어 있다.
+
+```bash
+cd backfill
+uv sync --frozen                 # backfill/.venv 생성
+cp .env.example .env             # 값 채우기
 ```
 
-`backfill/.env` 파일을 만들고 아래 변수를 채운다. `.env`는 커밋하지 않는다.
-엔드포인트 주소는 공개 저장소에 올리지 않으므로 팀 채널의 Furiosa RAG API 가이드에서 확인한다.
+`backfill/.env`는 커밋하지 않는다. 엔드포인트 주소는 공개 저장소에 올리지 않으므로 팀 채널의 Furiosa RAG API 가이드에서 확인한다.
 
 | 변수 | 필수 | 기본값 | 설명 |
 |---|---|---|---|
@@ -29,10 +31,12 @@ python -m venv .venv                                  # 저장소 루트에서
 
 ## 실행 (`backfill/`에서)
 
+```bash
+uv run python src/crawl.py              # 1단계 크롤링 (--only calendar | pages)
+uv run python src/parse_calendar.py     # 학사일정 → data/calendar.jsonl
+uv run python src/fetch_attachments.py  # 2단계 첨부 받기 (바뀌지 않은 파일은 다시 받지 않음)
+uv run python src/extract.py            # 3단계 텍스트 추출 → data/extracted/{doc_id}.json, 미리보기 .md
+uv run python src/clean.py              # 4단계 정제 → data/clean/{doc_id}.json, 미리보기 .md
 ```
-../.venv/Scripts/python src/crawl.py              # 1단계 크롤링 (--only calendar | pages)
-../.venv/Scripts/python src/parse_calendar.py     # 학사일정 → data/calendar.jsonl
-../.venv/Scripts/python src/fetch_attachments.py  # 2단계 첨부 받기 (바뀌지 않은 파일은 다시 받지 않음)
-../.venv/Scripts/python src/extract.py            # 3단계 텍스트 추출 → data/extracted/{doc_id}.json, 미리보기 .md
-../.venv/Scripts/python src/clean.py              # 4단계 정제 → data/clean/{doc_id}.json, 미리보기 .md
-```
+
+의존성을 바꿀 때는 `pyproject.toml`을 고친 뒤 `uv lock`으로 `uv.lock`을 갱신하고 둘 다 커밋한다.
