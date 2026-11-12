@@ -10,6 +10,7 @@
 - `serving/tests/`: 회귀 검사와 실제 MCP HTTP 동시 호출 검사
 - `serving/docs/`: 구현 범위, 인터페이스 초안, 검증 및 로컬 부하테스트 결과
 - `serving/sample/`: 기존 공개 학사자료 샘플. 전체 백필 데이터가 아닙니다.
+- `backfill/`: 교육정보 사이트 수집·첨부·추출·정제 파이프라인과 학사일정 데이터(`backfill/data/calendar.jsonl`). 실행 방법은 [backfill/README.md](backfill/README.md)
 
 모델 및 백필 담당의 모듈은 아직 통합하지 않았습니다. 로컬 검색은 BM25 기준선과 일부 샘플 질문의 데모 규칙이며 일반 검색 품질 평가 결과가 아닙니다. 실제 모델 API, 유사도 캐시, 인증 기반 유저별 제한과 여러 프로세스 간 공유 제어는 미완료입니다.
 

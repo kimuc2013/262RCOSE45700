@@ -1,0 +1,18 @@
+[project]
+name = "ku-academic-backfill"
+version = "0.1.0"
+description = "Team 7 academic data backfill: crawl, attachments, extraction, cleaning"
+requires-python = ">=3.12"
+dependencies = [
+    "requests>=2.34,<3",
+    "beautifulsoup4>=4.15,<5",
+    "lxml>=6.1,<7",
+    "pyyaml>=6.0,<7",
+    "python-dotenv>=1.2,<2",
+    "pdfplumber>=0.11.10,<0.12",
+    "openai>=3.41,<4",
+]
+
+[tool.uv]
+# src/의 단계별 스크립트를 직접 실행하는 구조라 프로젝트 자체는 빌드하지 않음
+package = false
