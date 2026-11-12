@@ -37,6 +37,13 @@ uv run python src/parse_calendar.py     # 학사일정 → data/calendar.jsonl
 uv run python src/fetch_attachments.py  # 2단계 첨부 받기 (바뀌지 않은 파일은 다시 받지 않음)
 uv run python src/extract.py            # 3단계 텍스트 추출 → data/extracted/{doc_id}.json, 미리보기 .md
 uv run python src/clean.py              # 4단계 정제 → data/clean/{doc_id}.json, 미리보기 .md
+uv run python src/chunk.py             # 6단계 청킹 → data/export/chunks.jsonl, calendar.jsonl, manifest.json
+uv run python src/detect_changes.py     # 5단계 변경 감지 → data/export/changes.json (--dry-run: 비교만)
 ```
+
+재수집 순서: `crawl.py` → (`parse_calendar.py`) → `fetch_attachments.py` → `extract.py` → `clean.py` → `chunk.py` → `detect_changes.py`.
+`data/export/`의 파일은 원문 발췌가 들어 있어 공개 저장소에 올리지 않고 S3로 전달한다. 형식 예시는 `data/chunks.sample.jsonl`.
+`changes.json`에는 지난 실행과 비교해 추가·변경·삭제된 문서(`doc_id`)와 학사일정 행사(`event_id`)가 들어간다. 수집일만 바뀐 것은 변경으로 보지 않는다.
+문서는 64비트 SimHash 지문의 해밍 거리가 기준값(`config/sources.yaml`의 `change_detection.simhash_threshold`, 현재 0) 이하면 실질적 변경이 아닌 것으로 보고 건너뛴다(`skipped`). 학사일정은 행사별로 정확히 비교한다.
 
 의존성을 바꿀 때는 `pyproject.toml`을 고친 뒤 `uv lock`으로 `uv.lock`을 갱신하고 둘 다 커밋한다.

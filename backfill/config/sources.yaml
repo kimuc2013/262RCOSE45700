@@ -41,12 +41,50 @@ index:
   include_scopes: [공통]
   exclude_docs:
     - info_caution_cultural       # 학부대학(구 교양교육원) 수강신청 유의사항
+    - affairs_academicRegu01      # 학사운영규정 PDF (2026-11-12 결정: 규정 전문은 과함. 데이터는 보관)
+  # 청크로 만들지 않을 소제목 (6단계). 맨 앞 소제목이 같거나, 소제목 경로 전체가 같으면 제외. 정제 결과에는 남아 있음
+  # 2026-11-12 결정: 문의처는 간단하게 적혀 있으면 청크로 남기고(54개 페이지, 모두 259자 이하·표 없음),
+  # 학과별 연락처가 긴 표로 되어 있는 것만 제외
+  exclude_sections:
+    - 문의 > 마이크로디그리 주관대학 및 주관학과(부) 행정실   # 학과별 행정실 연락처 표 72행
+  # 내용은 빼고 소제목 줄만 청크로 남길 소제목 경로 (2026-11-12 결정)
+  heading_only_sections:
+    - 문의 > 융합전공 주관대학 및 주관학과(부) 행정팀         # 학과별 행정팀 연락처 표 29행은 뺌 → major_convergence#문의
+  # 청크 text를 다른 청크 뒤에 붙이고 원래 청크는 뺌: 붙일 청크 → 받을 청크 (2026-11-12 결정)
+  merge_chunks:
+    # 전공디자인센터 상담 안내 상자(본문 영역 밖 빨간 상자) → 그 페이지의 문의 청크로
+    "major_convergence#본문": "major_convergence#문의"
+    "major_double#본문": "major_double#문의처"
+    "major_dual#본문": "major_dual#문의처"
+    "major_student#본문": "major_student#문의처"
+    "major_transfer#본문": "major_transfer#문의처"
+    "freely_select#본문": "freely_select#문의처"
+  # 청크로 넘기지 않을 청크 ID (2026-11-12 결정)
+  exclude_chunks:
+    - program_open#본문          # 공개강의 페이지 첫 소개 문장 한 줄
+  # 문서별 section 이름 바꾸기: 규칙으로 만든 이름 → 바꿀 이름 (2026-11-12 결정). 원래 제목은 text 첫 줄에 남음
+  section_names:
+    policy_3no: {"3無 정책": 3무정책}
+
+# 변경 감지 (5단계 detect_changes.py). 기획안 19p 방식 (2026-11-12 결정)
+# 문서마다 64비트 SimHash 지문을 만들고, 지난 실행과의 해밍 거리가 threshold 이하면 건너뜀(재처리·재임베딩 안 함, 캐시 유지)
+# 기준값 0 (2026-11-12 측정 후 결정): 이중전공 문서(1,334자)에서 숫자·자격 조건 변경은 5개를 쌓아도 거리 1,
+# 쉼표 3개 변경은 2, 절반 삭제는 11 → 기준 3이면 "신청불가→신청가능"도 건너뜀.
+# 기준 0은 지문이 완전히 같을 때만 건너뜀 = 사실상 공백·줄바꿈만 바뀐 경우 (SimHash는 공백을 하나로 줄여 계산)
+# 건너뛴 문서는 changes.json의 skipped에 남기고 지문 기준은 갱신하지 않음
+change_detection:
+  simhash_threshold: 0      # 해밍 거리가 이 값 이하면 실질적 변경이 아님
+  shingle_chars: 3          # SimHash 단위: 공백을 하나로 줄인 본문의 글자 3개씩
 
 # 정제 때 문서에서 잘라낼 부분 (4단계 clean.py). PDF는 쪽 번호와 시작 줄로 지정, from이 없으면 그 쪽 전체
 clean:
   drop_ranges:
     info_caution_field:           # 현장실습 유의사항: "6. 현장실습지원센터 운영 교과목 안내"는 제외 (2026-11-02 결정)
       - {page: 3, from: "6. 현장실습지원센터 운영 교과목 안내"}   # 이 줄부터 쪽 끝(교과목 표)까지. 영어판은 영어 번역 규칙으로 통째 삭제
+
+  # 지울 줄 (목록 기호 "- "를 뗀 글자가 이와 같으면 삭제)
+  drop_lines:
+    - 교류안내는 하단의 공지사항 게시판 확인     # program_internal_in. 게시판은 수집 안 함 (2026-11-12 결정)
 
 # 첨부: 페이지에 걸린 첨부 중 받지 않을 것 (주소에 이 문자열이 들어 있으면 제외)
 attachments:
