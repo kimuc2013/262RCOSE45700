@@ -1,5 +1,6 @@
 .DS_Store
 .venv/
+venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -14,3 +15,19 @@ serving/data/
 deployments/
 
 /keynote/
+
+# 백필: 개인 작업 지침 (GitHub 업로드 금지)
+CLAUDE.md
+
+# 백필: 원문·첨부 원본과 정제본은 저작권상 공개 저장소에 올리지 않음
+backfill/data/raw/
+backfill/data/extracted/
+backfill/data/clean/
+
+# 백필: 단계별 실행 기록 (실행할 때마다 쌓이는 로컬 기록)
+backfill/data/reports/
+
+# 에디터·OS
+.vscode/
+.idea/
+Thumbs.db

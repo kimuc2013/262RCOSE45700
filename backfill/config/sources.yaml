@@ -1,0 +1,172 @@
+# 수집 대상 목록 (기획안 17p)
+# 범위: 학사일정, 학사행정, 제증명, 전공, 수강신청, 성적, 졸업요건 + 등록금, 교육프로그램, 교육정책 (2026-10-29 추가) — 로그인 불필요한 학부 공통 페이지만
+# 제외: 로그인이 필요한 정보, 대학원 자료, 세종캠퍼스 전용 내용
+# 2026-10-29 메뉴 전수 조사: eduinfo 내부 페이지는 모두 로그인 없이 열림
+#
+# 페이지 항목: doc_id(고유, 바꾸지 말 것) / path / category / enabled(기본 true) / recrawl(기본 defaults 값)
+# doc_title은 수집 때 페이지 <title>의 메뉴 경로에서 가져옴
+
+site:
+  name: 고려대 교육정보
+  base_url: https://registrar.korea.ac.kr
+  robots_checked: "2026-10-29"   # Allow: /
+
+defaults:
+  scope: 공통         # 청크 scope 값. 단과대 공지로 확장하면 페이지별로 다른 값을 씀
+  recrawl: semester
+
+# 학사일정: 학기 선택 목록에서 학기별로 받음
+calendar:
+  doc_id: schedule
+  path: /eduinfo/affairs/schedule.do
+  category: 학사일정
+  recrawl: weekly
+  semesters: all        # all: 선택 목록의 모든 학기 / current: 기본 표시 학기만
+  from_semester: "2025-1"   # 이 학기부터만 수집·변환 (2026-11-02 결정: 그 이전 학기는 필요 없음)
+
+# VLM(Qwen3-VL)으로 읽을 이미지 (2026-11-02 결정: 이것만 읽음, 나머지 이미지는 제목·링크만)
+# 결과는 data/raw/vlm/에 저장해 이미지가 바뀌지 않으면 다시 호출하지 않음
+vlm_images:
+  - src: https://registrar.korea.ac.kr/_res/eduinfo/img/program/img_program_map(kor).png
+    prompt: |
+      이 이미지는 고려대학교 교환학생 프로그램 페이지의 '주요협정국가 및 대학 현황 지도'입니다.
+      이미지에 적힌 글자를 빠짐없이 그대로 옮겨 적으세요. 지역 이름을 소제목으로, 그 아래 대학 이름을 한 줄에 하나씩 '- '로 적으세요.
+      이미지에 없는 내용(국기로 짐작한 나라 이름 등)은 추가하지 마세요. 설명이나 요약은 쓰지 마세요.
+
+# 색인 대상 (6단계 청킹부터 적용). 2026-11-02 결정
+# - 단과대별 수강신청 유의사항 PDF 19개는 기획안상 Later(단과대 확장, 복잡한 표 첨부) → 데이터는 보관, 1차 색인에서 제외
+#   나중에 넣으려면 include_scopes에 단과대 이름을 추가
+# - 학부대학(교양) 수강신청 유의사항은 중요도가 낮고 표가 복잡해 제외
+index:
+  include_scopes: [공통]
+  exclude_docs:
+    - info_caution_cultural       # 학부대학(구 교양교육원) 수강신청 유의사항
+
+# 정제 때 문서에서 잘라낼 부분 (4단계 clean.py). PDF는 쪽 번호와 시작 줄로 지정, from이 없으면 그 쪽 전체
+clean:
+  drop_ranges:
+    info_caution_field:           # 현장실습 유의사항: "6. 현장실습지원센터 운영 교과목 안내"는 제외 (2026-11-02 결정)
+      - {page: 3, from: "6. 현장실습지원센터 운영 교과목 안내"}   # 이 줄부터 쪽 끝(교과목 표)까지. 영어판은 영어 번역 규칙으로 통째 삭제
+
+# 첨부: 페이지에 걸린 첨부 중 받지 않을 것 (주소에 이 문자열이 들어 있으면 제외)
+attachments:
+  exclude_url_contains:
+    - "_sejong_"        # 수강신청 단과대학별 유의사항 중 세종캠퍼스 PDF 7개
+
+  # 첨부별 scope (파일명: scope). 여기 없는 첨부는 걸린 페이지의 scope를 따름
+  # 수강신청 단과대학별 유의사항 PDF: 단과대 전용 자료라 단과대 이름으로 구분 (2026-11-02 결정)
+  # 교직은 사범대학, 학부대학(교양)·현장실습지원센터는 모든 학부생 대상이라 공통
+  scope:
+    info_caution_cultural.pdf: 공통             # 학부대학(구 교양교육원)
+    info_caution_field.pdf: 공통                # 현장실습지원센터
+    info_caution_teaching.pdf: 사범대학         # 교직
+    info_caution_business.pdf: 경영대학
+    info_caution_liberal.pdf: 문과대학
+    info_caution_life.pdf: 생명과학대학
+    info_caution_political.pdf: 정경대학
+    info_caution_science.pdf: 이과대학
+    info_caution_engineering.pdf: 공과대학
+    info_caution_medicine.pdf: 의과대학
+    info_caution_education.pdf: 사범대학
+    info_caution_nursing.pdf: 간호대학
+    info_caution_info.pdf: 정보대학
+    info_caution_design.pdf: 디자인조형학부
+    info_caution_international.pdf: 국제대학
+    info_caution_media.pdf: 미디어대학
+    info_caution_health.pdf: 보건과학대학
+    info_caution_security.pdf: 스마트보안학부
+    info_caution_psychology.pdf: 심리학부
+    info_caution_mobility.pdf: 스마트모빌리티학부
+    info_caution_interdisciplinary.pdf: 자유전공학부
+
+pages:
+  # ── 학사행정 ─────────────────────────────
+  - {doc_id: leave_normal,        path: /eduinfo/affairs/leave_normal.do,        category: 학사행정}
+  - {doc_id: leave_special,       path: /eduinfo/affairs/leave_special.do,       category: 학사행정}
+  - {doc_id: return,              path: /eduinfo/affairs/return.do,              category: 학사행정}
+  - {doc_id: drop,                path: /eduinfo/affairs/drop.do,                category: 학사행정}
+  - {doc_id: expelled,            path: /eduinfo/affairs/expelled.do,            category: 학사행정}
+  - {doc_id: readmission,         path: /eduinfo/affairs/readmission.do,         category: 학사행정}
+  - {doc_id: transfer,            path: /eduinfo/affairs/transfer.do,            category: 학사행정}
+  - {doc_id: correction,          path: /eduinfo/affairs/correction.do,          category: 학사행정}
+
+  # ── 제증명 ───────────────────────────────
+  - {doc_id: certificate_kind,    path: /eduinfo/affairs/certificate_kind.do,    category: 제증명}
+  - {doc_id: certificate_issue,   path: /eduinfo/affairs/certificate_issue.do,   category: 제증명}
+  - {doc_id: card,                path: /eduinfo/affairs/card.do,                category: 제증명}
+
+  # ── 전공 ─────────────────────────────────
+  - {doc_id: major1,              path: /eduinfo/info/major1.do,                 category: 전공}
+  - {doc_id: major_double,        path: /eduinfo/info/major_double.do,           category: 전공}
+  - {doc_id: major_convergence,   path: /eduinfo/info/major_convergence.do,      category: 전공}
+  - {doc_id: major_student,       path: /eduinfo/info/major_student.do,          category: 전공}
+  - {doc_id: major_dual,          path: /eduinfo/info/major_dual.do,             category: 전공}
+  - {doc_id: major_microdegree,   path: /eduinfo/info/major_microdegree.do,      category: 전공}
+  - {doc_id: major_transfer,      path: /eduinfo/info/major_transfer.do,         category: 전공}
+  - {doc_id: major_minor,         path: /eduinfo/info/major_minor.do,            category: 전공}
+  - {doc_id: major_giveup,        path: /eduinfo/info/major_giveup.do,           category: 전공}
+  - {doc_id: freely_select,       path: /eduinfo/info/freely_select.do,          category: 전공}
+  - {doc_id: freely_select_1,     path: /eduinfo/info/freely_select_1.do,        category: 전공}
+  - {doc_id: freely_select_2,     path: /eduinfo/info/freely_select_2.do,        category: 전공}
+
+  # ── 수강신청 ─────────────────────────────
+  - {doc_id: registration_overview,    path: /eduinfo/info/registration_overview.do,    category: 수강신청}
+  - {doc_id: registration_step,        path: /eduinfo/info/registration_step.do,        category: 수강신청}
+  - {doc_id: registration_courses,     path: /eduinfo/info/registration_courses.do,     category: 수강신청}
+  - {doc_id: registration_no_offered,  path: /eduinfo/info/registration_no_offered.do,  category: 수강신청}
+  - {doc_id: registration_similar,     path: /eduinfo/info/registration_similar.do,     category: 수강신청}
+  - {doc_id: registration_caution,     path: /eduinfo/info/registration_caution.do,     category: 수강신청}   # 단과대학별 PDF 20개 첨부
+
+  # ── 성적 ─────────────────────────────────
+  - {doc_id: grade_overview,      path: /eduinfo/info/grade_overview.do,         category: 성적}
+  - {doc_id: grade_retake,        path: /eduinfo/info/grade_retake.do,           category: 성적}
+  - {doc_id: grade_giveup,        path: /eduinfo/info/grade_giveup.do,           category: 성적}
+  - {doc_id: grade_reco_normal,   path: /eduinfo/info/grade_reco_normal.do,      category: 성적}
+  - {doc_id: grade_reco_exchange, path: /eduinfo/info/grade_reco_exchange.do,    category: 성적}
+  - {doc_id: grade_reco_dual,     path: /eduinfo/info/grade_reco_dual.do,        category: 성적}
+  - {doc_id: grade_missed,        path: /eduinfo/info/grade_missed.do,           category: 성적}
+  - {doc_id: grade_excused,       path: /eduinfo/info/grade_excused.do,          category: 성적}
+  - {doc_id: sessions,            path: /eduinfo/info/sessions.do,               category: 성적}      # 계절수업
+
+  # ── 졸업요건 ─────────────────────────────
+  - {doc_id: graduation_require,    path: /eduinfo/info/graduation_require.do,    category: 졸업요건}
+  - {doc_id: graduation_completion, path: /eduinfo/info/graduation_completion.do, category: 졸업요건}  # 본문이 infodepot iframe, 접속 불가 → 보류. 제목·링크만 남김 (extraction_method: none)
+  - {doc_id: graduation_early,      path: /eduinfo/info/graduation_early.do,      category: 졸업요건}
+  - {doc_id: graduation_honors,     path: /eduinfo/info/graduation_honors.do,     category: 졸업요건}
+
+  # ── 범위 추가 (2026-10-29 결정: 기획안 7개 범위 밖이지만 학부 공통) ──
+  - {doc_id: policy_3no,          path: /eduinfo/info/3no.do,                    category: 교육정책}
+  - {doc_id: flex_semester,       path: /eduinfo/info/flex_semester.do,          category: 교육정책}
+  - {doc_id: tutorial,            path: /eduinfo/info/tutorial.do,               category: 교육정책}
+  - {doc_id: enroll_schedule,     path: /eduinfo/enrollment/schedule.do,         category: 등록금}
+  - {doc_id: enroll_regular,      path: /eduinfo/enrollment/regular.do,          category: 등록금}
+  - {doc_id: enroll_divided,      path: /eduinfo/enrollment/divided.do,          category: 등록금}
+  - {doc_id: enroll_excess,       path: /eduinfo/enrollment/excess.do,           category: 등록금}
+  - {doc_id: enroll_payment,      path: /eduinfo/enrollment/payment.do,          category: 등록금}
+  - {doc_id: enroll_receipt,      path: /eduinfo/enrollment/receipt.do,          category: 등록금}
+  - {doc_id: enroll_return,       path: /eduinfo/enrollment/return.do,           category: 등록금}
+  - {doc_id: enroll_etc,          path: /eduinfo/enrollment/etc.do,              category: 등록금}
+  - {doc_id: enroll_sessions,     path: /eduinfo/enrollment/sessions.do,         category: 등록금}
+  - {doc_id: program_internal_out, path: /eduinfo/program/internal_out.do,       category: 교육프로그램}
+  - {doc_id: program_internal_in, path: /eduinfo/program/internal_in.do,         category: 교육프로그램}
+  - {doc_id: program_exchange,    path: /eduinfo/program/exchange.do,            category: 교육프로그램}
+  - {doc_id: program_leadership,  path: /eduinfo/program/leadership.do,          category: 교육프로그램}
+  - {doc_id: program_internship,  path: /eduinfo/program/internship.do,          category: 교육프로그램}
+  - {doc_id: program_campus,      path: /eduinfo/program/campus.do,              category: 교육프로그램}
+  - {doc_id: program_language,    path: /eduinfo/program/language.do,            category: 교육프로그램}
+  - {doc_id: program_support,     path: /eduinfo/program/support.do,             category: 교육프로그램}
+  - {doc_id: program_open,        path: /eduinfo/program/open.do,                category: 교육프로그램}
+  - {doc_id: faq,                 path: /eduinfo/board/faq.do,                   category: FAQ, enabled: false}   # 게시판형, 첨부 있음
+
+# 수집하지 않음 (기록용)
+excluded:
+  - {path: /eduinfo/board/contact_grad.do, reason: 대학원}
+  - {path: /eduinfo/affairs/contact.do, reason: 연락처 목록 (개인정보 정제 원칙)}
+  - {path: /eduinfo/board/contact_under.do, reason: 연락처 목록 (개인정보 정제 원칙)}
+  - {path: /eduinfo/board/form.do, reason: 서식 파일 게시판, 답변 근거로 쓰기 어려움}
+  - {path: /eduinfo/board/curriculum.do, reason: 학과별 교육과정표 (학부 공통 아님)}
+  - {path: /eduinfo/board/introduce.do, reason: 학과별 전공소개책자 (학부 공통 아님)}
+
+# 로그인 필요 또는 외부 사이트 — login_required 안내용으로 서빙 담당에게 전달 (기획안 25p)
+login_required:
+  - {name: 교육과정표, url: "https://ams.korea.ac.kr/com/lgin/SsoCtr/initExtPageWork.do?locale=ko&link=crclmList", note: KU SSO 로그인}
