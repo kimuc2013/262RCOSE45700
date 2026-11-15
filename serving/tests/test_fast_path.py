@@ -95,7 +95,7 @@ def test_global_caller_limit_applies_before_db_reads(service, monkeypatch, kind)
             await first
         assert online._search_callers == online._calendar_callers == 0
         release.set()
-        assert (await call())['status'] == 'found'
+        assert (await call())['status'] == ('evidence_available' if kind == 'search' else 'found')
     asyncio.run(run())
 
 

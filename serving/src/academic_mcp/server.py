@@ -28,7 +28,8 @@ def create_server(host='127.0.0.1', port=8000):
     async def search_academic_info(query: str, history: list[dict[str, str]] | None = None,
                              top_k: int = 5, semester: str | None = None, target: str | None = None) -> dict[str, Any]:
         """공개 학부 학사자료의 근거 후보와 URL을 반환합니다. status와 최신성 경고를 확인하세요.
-        history는 이전 user/assistant 메시지입니다. 로컬 모드는 BM25 기준선이며 후속 질의 재작성을 지원하지 않습니다.
+        history는 이전 user/assistant 메시지입니다. 로컬 모드는 BM25 기준선입니다. evidence_available이면 원문으로 답할 수 있는 부분을 답하고 없는 사실은 추정하지 마세요.
+        후속 질문은 클라이언트가 대화의 대상을 포함한 독립 질문으로 작성해 호출하세요.
         """
         try:
             return await service.asearch(query, history, top_k, semester, target)
