@@ -1,12 +1,14 @@
 # GitHub Actions와 EC2 배포
 
-## 동작과 현재 상태
+## 현재 운영 방식과 상태
 
-PR은 Python 3.12 회귀 테스트와 Docker 빌드를 실행합니다. main push 또는 main에서 수동 실행한 워크플로는 같은 검사를 통과한 뒤, `DEPLOY_ENABLED=true`일 때만 EC2 배포를 진행합니다. 배포 비활성 상태의 녹색 CI는 EC2 배포 완료를 뜻하지 않습니다. 배포 성공은 deploy job의 SSM 완료와 실제 MCP 호출 성공까지 확인해야 합니다.
+현재 자동 배포는 EC2의 `ku-mcp-autodeploy.timer`가 수행합니다. GitHub Actions는 PR/main의 Python 테스트와 Docker 빌드를 담당합니다. EC2는 약 2분 간격으로 공개 main과 그 SHA의 push CI를 확인하고, 가장 최근 검사 결과가 success인 새 커밋만 기존 deploy.sh로 배포합니다. PR, 다른 브랜치, 실패하거나 진행 중인 CI는 배포하지 않습니다. 변경이 없으면 CI API 조회나 컨테이너 재시작을 하지 않습니다.
 
-흐름은 GitHub Actions → OIDC 임시 AWS 자격 증명 → SSM Run Command → 테스트한 커밋 SHA 다운로드 → EC2 Docker 빌드 → 재시작 → MCP 호출 검사입니다. SSH 개인키와 장기 AWS 접근 키를 GitHub에 저장하지 않습니다. 현재 공개 저장소를 전제로 GitHub에서 소스를 다운로드하므로 저장소를 비공개로 바꾸면 전달 방식을 함께 바꿔야 합니다.
+추가 IAM 역할 생성 권한이 없어 GitHub OIDC/SSM 방식 대신 이 방식을 사용합니다. AWS 장기 키, SSH 키, GitHub 쓰기 토큰을 배포 타이머에 저장하지 않습니다. EC2의 기존 SSH 접근으로 최초 설치를 수행하고, 이후에는 EC2가 GitHub로 나가는 연결만 사용합니다. 공개 저장소를 전제로 하므로 비공개 전환 시 자격 증명 및 전달 방식의 재설계가 필요합니다.
 
-실제 EC2 접속과 SSM 등록은 아직 확인되지 않았습니다. 브라우저 터미널에서 systemd가 없다고 나오면 CloudShell 등 다른 환경일 수 있으므로 EC2 내부 접속 여부를 먼저 확인합니다. 사용자 계정의 IAM 역할 생성은 SafePowerUser에서 차단된 전력이 있어 아래 AWS 작업은 관리자가 제공해야 할 수 있습니다.
+GitHub 변수 `AUTO_DEPLOY_MODE=ec2-pull`, `DEPLOY_ENABLED=false`를 사용합니다. 기존 SSM deploy job은 건너뛰는 것이 정상입니다. CI 녹색만으로 실제 EC2 배포 성공을 판단하지 마세요. 실제 성공은 EC2 journal의 `Auto deployment successful: <SHA>`와 `/opt/ku-academic-mcp/current` 및 MCP 호출로 확인합니다. 상태 반영 지연은 확인 간격 약 2분에 빌드와 MCP 검사 시간을 더한 값이며 서비스 중단 없는 배포는 아닙니다.
+
+SSM 방식의 코드는 향후 대안으로 보존했습니다. 아래 OIDC 설정은 현재 타이머 방식에서는 필요하지 않습니다.
 
 ## EC2 사전 준비
 
@@ -17,7 +19,7 @@ PR은 Python 3.12 회귀 테스트와 Docker 빌드를 실행합니다. main pus
 
 자동 배포는 EC2에서 root로 실행됩니다. 이 역할을 가진 워크플로는 해당 인스턴스에서 명령 실행 권한이 있으므로 IAM 대상을 한 인스턴스로 제한합니다. GitHub의 main 보호 및 필수 CI 검사는 저장소 소유자가 별도로 설정하는 것을 권장합니다.
 
-## 관리자에게 요청할 AWS 설정
+## SSM 방식으로 전환할 때 관리자에게 요청할 AWS 설정
 
 - GitHub OIDC 공급자 `https://token.actions.githubusercontent.com`, audience `sts.amazonaws.com`.
 - 해당 팀 저장소의 main만 신뢰하는 역할. `serving/deploy/oidc-trust.example.json`에서 ACCOUNT_ID를 치환합니다. GitHub 조직에서 OIDC subject 형식을 사용자 지정했다면 실제 subject에 맞춰야 합니다.
@@ -28,7 +30,7 @@ PR은 Python 3.12 회귀 테스트와 Docker 빌드를 실행합니다. main pus
 
 > GitHub kimuc2013/262RCOSE45700의 main에서만 AssumeRoleWithWebIdentity가 가능한 OIDC 역할을 부탁드립니다. 지정 EC2에 AWS-RunShellScript SendCommand와 GetCommandInvocation을 허용하고, EC2 인스턴스 프로파일에는 SSM Agent 통신 권한을 추가해 주세요. 정책 예시는 저장소 serving/deploy에 있습니다.
 
-## GitHub 변수와 활성화
+## SSM 방식으로 전환할 때 GitHub 변수와 활성화
 
 Settings → Secrets and variables → Actions → Variables에 다음 Repository variables를 설정합니다. 비밀 접근 키는 필요하지 않습니다.
 
@@ -38,6 +40,8 @@ Settings → Secrets and variables → Actions → Variables에 다음 Repositor
 | `EC2_INSTANCE_ID` | i-로 시작하는 인스턴스 ID |
 | `AWS_DEPLOY_ROLE_ARN` | 관리자가 제공한 OIDC 역할 ARN |
 | `DEPLOY_ENABLED` | 최초에는 비워두거나 false, 준비 완료 후 true |
+
+먼저 EC2의 `ku-mcp-autodeploy.timer`를 disable하여 두 배포 경로가 동시에 동작하지 않게 하고 `AUTO_DEPLOY_MODE`를 ssm으로 변경합니다.
 
 1. CI가 통과하는지 확인합니다.
 2. SSM의 해당 EC2 Online과 OIDC 역할 구성을 확인합니다.
@@ -59,3 +63,38 @@ Settings → Secrets and variables → Actions → Variables에 다음 Repositor
 - 포트는 여전히 EC2 loopback 8000만 사용합니다. HTTPS와 인증을 붙인 외부 MCP 접속은 별도 작업입니다.
 - 릴리스와 이미지를 자동 삭제하지 않으므로 디스크 사용량을 확인하고 현재 및 복구 대상이 아닌 오래된 항목만 정리합니다.
 - SSM 명령 최대 실행은 900초입니다. 워크플로 타임아웃 뒤에도 원격 명령이 살아 있을 수 있으므로 새 배포 전 SSM 실행 상태를 확인합니다.
+
+## 현재 배포의 운영 명령
+
+EC2 SSH 터미널에서 실행합니다. 실제 코드 릴리스는 `/opt/ku-academic-mcp/current`로 확인합니다. `/home/ec2-user/262RCOSE45700`는 배포한 커밋으로 분리 체크아웃한 소스이며 이 폴더를 수정하는 것만으로 실행 컨테이너가 갱신되지는 않습니다.
+
+```bash
+sudo docker ps
+sudo docker logs --tail 50 ku-academic-mcp-mcp-1
+sudo docker exec ku-academic-mcp-mcp-1 python -m academic_mcp.smoke
+sudo docker exec -it ku-academic-mcp-mcp-1 python -m academic_mcp.terminal_demo --color always
+```
+
+새 커밋을 수동 배포할 때는 저장소를 fetch하고 확인한 40자리 커밋 SHA를 `sudo bash /home/ec2-user/262RCOSE45700/serving/deploy/deploy.sh <SHA>`에 전달합니다. 배포 스크립트 자체가 변경된 릴리스라면 로컬 소스도 해당 커밋으로 먼저 갱신합니다. 지속 설정 파일과 영구 볼륨은 삭제하지 않습니다.
+
+## EC2 자동 배포 타이머 설치와 운영
+
+확인한 main 코드의 `serving/deploy/install-autodeploy.sh`를 EC2에서 sudo로 실행합니다. Docker와 Compose, Python 3, git, curl, flock이 필요합니다. 설치기는 `/opt/ku-academic-mcp/autodeploy.py`와 systemd service/timer를 만들고 부팅 후 및 각 검사 종료 약 2분 뒤에 실행되도록 설정합니다. 설치 시 최초 검사도 수행합니다. 타이머 코드 자체는 배포 중 덮어쓰지 않으므로 타이머 변경 시 설치기를 다시 실행해야 합니다.
+
+```bash
+sudo bash serving/deploy/install-autodeploy.sh
+sudo systemctl list-timers ku-mcp-autodeploy.timer
+sudo journalctl -u ku-mcp-autodeploy.service -n 50 --no-pager
+readlink -f /opt/ku-academic-mcp/current
+```
+
+GitHub 공개 API는 인증 없이 사용하며 새 main의 CI를 기다리는 동안만 조회합니다. API 제한, 네트워크 오류나 비정상 응답이면 기존 서비스를 유지하고 다음 검사로 넘깁니다. 약 2분 간격이면 계속 기다리는 경우에도 조회는 시간당 약 30회입니다. GitHub rate limit을 통제하거나 회피하지 않습니다.
+
+배포 시도 전에 `autodeploy.failed-sha`를 기록합니다. 배포 실패 시 deploy.sh가 이전 이미지 복구를 시도하고, 같은 SHA를 주기적으로 재배포하지 않습니다. 새 main SHA는 다음 검사에서 처리할 수 있습니다. 같은 SHA를 재시도하려면 원인을 해결한 뒤 실행합니다.
+
+```bash
+sudo rm -f /opt/ku-academic-mcp/autodeploy.failed-sha
+sudo systemctl start ku-mcp-autodeploy.service
+```
+
+일시 중지는 `sudo systemctl disable --now ku-mcp-autodeploy.timer`입니다. 이미 실행 중인 배포를 강제로 끊지는 않습니다. GitHub의 배포 상태/실패 알림 연동은 현재 없으며 EC2 journal에서 확인합니다. 이 타이머는 지정 서버의 root로 CI가 통과한 main 코드를 실행하므로 저장소의 main 쓰기 권한과 CI 변경을 신뢰하는 구조입니다.

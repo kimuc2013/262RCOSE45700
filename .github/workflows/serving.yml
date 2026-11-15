@@ -27,8 +27,9 @@ jobs:
       - name: Verify container build
         run: docker build -t ku-academic-mcp:ci serving
   deploy:
+    name: Optional SSM deployment
     needs: test
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && vars.DEPLOY_ENABLED == 'true'
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && vars.DEPLOY_ENABLED == 'true' && vars.AUTO_DEPLOY_MODE != 'ec2-pull'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:
