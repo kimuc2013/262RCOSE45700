@@ -6,7 +6,7 @@ PR은 Python 3.12 회귀 테스트와 Docker 빌드를 실행합니다. main pus
 
 흐름은 GitHub Actions → OIDC 임시 AWS 자격 증명 → SSM Run Command → 테스트한 커밋 SHA 다운로드 → EC2 Docker 빌드 → 재시작 → MCP 호출 검사입니다. SSH 개인키와 장기 AWS 접근 키를 GitHub에 저장하지 않습니다. 현재 공개 저장소를 전제로 GitHub에서 소스를 다운로드하므로 저장소를 비공개로 바꾸면 전달 방식을 함께 바꿔야 합니다.
 
-실제 EC2 접속과 SSM 등록은 아직 확인되지 않았습니다. 브라우저 터미널에서 systemd가 없다고 나오면 CloudShell 등 다른 환경일 수 있으므로 EC2 내부 접속 여부를 먼저 확인합니다. 사용자 계정의 IAM 역할 생성은 SafePowerUser에서 차단된 전력이 있어 아래 AWS 작업은 관리자가 제공해야 할 수 있습니다.
+2026-11-15 SSH 접속과 샘플 MVP의 실제 EC2 배포를 확인했습니다. Docker 및 Compose를 설치했고 MCP 검증과 컨테이너 재시작 후 데이터 유지가 성공했습니다. SSM Agent는 active이지만 SSM managed node의 Online 및 OIDC 자동 배포는 아직 미검증입니다. 사용자 계정의 IAM 역할 생성은 SafePowerUser에서 차단된 전력이 있어 아래 AWS 작업은 관리자가 제공해야 할 수 있습니다.
 
 ## EC2 사전 준비
 
@@ -59,3 +59,16 @@ Settings → Secrets and variables → Actions → Variables에 다음 Repositor
 - 포트는 여전히 EC2 loopback 8000만 사용합니다. HTTPS와 인증을 붙인 외부 MCP 접속은 별도 작업입니다.
 - 릴리스와 이미지를 자동 삭제하지 않으므로 디스크 사용량을 확인하고 현재 및 복구 대상이 아닌 오래된 항목만 정리합니다.
 - SSM 명령 최대 실행은 900초입니다. 워크플로 타임아웃 뒤에도 원격 명령이 살아 있을 수 있으므로 새 배포 전 SSM 실행 상태를 확인합니다.
+
+## 현재 배포의 운영 명령
+
+EC2 SSH 터미널에서 실행합니다. 실제 코드 릴리스는 `/opt/ku-academic-mcp/current`로 확인합니다. `/home/ec2-user/262RCOSE45700`는 배포한 커밋으로 분리 체크아웃한 소스이며 이 폴더를 수정하는 것만으로 실행 컨테이너가 갱신되지는 않습니다.
+
+```bash
+sudo docker ps
+sudo docker logs --tail 50 ku-academic-mcp-mcp-1
+sudo docker exec ku-academic-mcp-mcp-1 python -m academic_mcp.smoke
+sudo docker exec -it ku-academic-mcp-mcp-1 python -m academic_mcp.terminal_demo --color always
+```
+
+새 커밋을 수동 배포할 때는 저장소를 fetch하고 확인한 40자리 커밋 SHA를 `sudo bash /home/ec2-user/262RCOSE45700/serving/deploy/deploy.sh <SHA>`에 전달합니다. 배포 스크립트 자체가 변경된 릴리스라면 로컬 소스도 해당 커밋으로 먼저 갱신합니다. 지속 설정 파일과 영구 볼륨은 삭제하지 않습니다.
