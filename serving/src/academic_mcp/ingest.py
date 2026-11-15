@@ -11,6 +11,10 @@ from .store import Store
 
 def load_records(path: Path, kind: str):
     records = json.loads(path.read_text(encoding="utf-8"))
+    return validate_records(records, kind, path)
+
+
+def validate_records(records, kind, path, *, redact_contacts=True):
     if not isinstance(records, list) or not records:
         raise ValueError(f"{path}: empty or invalid snapshot; keeping existing database")
     required = ("id", "doc_title", "section", "text", "url", "collected_at") if kind == "chunks" else (
@@ -33,8 +37,9 @@ def load_records(path: Path, kind: str):
                 raise ValueError("Duplicate chunk id")
             seen.add(record['id'])
             # Sample includes a contact section. Do not put personal phone/email into search.
-            record['text'] = re.sub(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", "[이메일 제거]", record['text'])
-            record['text'] = re.sub(r"(?<!\d)0\d{1,2}[- ]\d{3,4}[- ]\d{4}(?!\d)", "[연락처 제거]", record['text'])
+            if redact_contacts:
+                record['text'] = re.sub(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", "[이메일 제거]", record['text'])
+                record['text'] = re.sub(r"(?<!\d)0\d{1,2}[- ]\d{3,4}[- ]\d{4}(?!\d)", "[연락처 제거]", record['text'])
     return records
 
 
@@ -48,9 +53,16 @@ def ingest(db: str, samples: Path):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--db", default="data/academic.sqlite3")
-    parser.add_argument("--samples", type=Path, required=True)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--samples", type=Path)
+    source.add_argument("--snapshot", type=Path, help="Verified backfill manifest and JSONL directory")
     args = parser.parse_args()
-    print(json.dumps(ingest(args.db, args.samples), ensure_ascii=False))
+    if args.snapshot:
+        from .snapshot import ingest_snapshot
+        result = ingest_snapshot(args.db, args.snapshot)
+    else:
+        result = ingest(args.db, args.samples)
+    print(json.dumps(result, ensure_ascii=False))
 
 
 if __name__ == "__main__":
