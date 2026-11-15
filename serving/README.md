@@ -118,3 +118,17 @@ uv run python -m academic_mcp.load_test --concurrency 8 --requests 2000 --output
 p50/p95/p99, 성공 처리량, 오류 코드별 건수, 캐시 적중과 검색 작업 병합 횟수를 JSON에 저장합니다. 전체 지연 분위수에는 거절 응답도 포함하므로 `success_p95_ms` 및 성공률과 함께 봅니다. `insufficient_evidence`는 정상 도구 응답으로 세고 검색 품질은 평가하지 않습니다.
 
 실제 배포 서버에 권한 있는 부하를 보내려면 `--url https://서버주소/mcp`를 지정할 수 있습니다. 이 경우 기존 서버를 시작하거나 종료하지 않습니다. 로컬 단일 실행과 짧은 반복 결과로 EC2, 실제 모델 API, 장시간 운영 용량을 추정하지 않습니다.
+
+## 실제 백필 스냅샷 적재
+
+S3 파일이 있다는 것만으로 서비스 DB가 바뀌지는 않습니다. 같은 버전의 `manifest.json`, `chunks.jsonl`, `calendar.jsonl`을 별도 staging 디렉터리로 모두 받은 후 적재합니다. 적재기는 수집이나 임베딩 API를 호출하지 않습니다.
+
+```bash
+uv run academic-data --snapshot /path/to/staging --db data/academic.sqlite3
+```
+
+schema_version 1.0, SHA-256, 선언 개수, ID 중복, 날짜와 공식 출처를 검사하고 두 파일이 모두 유효할 때만 한 트랜잭션으로 교체합니다. 실패하면 기존 데이터와 캐시를 유지합니다. 성공한 교체에서는 revision이 바뀌고 기존 캐시 및 벡터가 무효화됩니다. manifest 및 실제 임베딩 수는 DB meta의 dataset에 기록합니다. `chunk_id`를 내부 id로, 일정의 `doc_title`과 `url`을 내부 name과 source로 연결하며 원래 필드와 target_semester는 보존합니다. 비어 있는 section은 제목으로 표시하되 section_original에 원값을 남깁니다. extraction_method=none은 답변 근거에서 제외합니다. 새 백필 텍스트는 백필의 개인정보 정제 정책을 적용한 자료여야 하며 공개 부서 연락처는 임의로 다시 지우지 않습니다.
+
+manifest에 임베딩 모델이 적혀 있어도 실제 embedding이 null이면 벡터 색인이 준비된 것이 아닙니다. 이 적재기는 제공 벡터를 검색용 vectors 테이블에 자동 등록하지 않습니다. 실제 모델/검색 모듈과 연결하기 전에는 기존 BM25 후보 검색과 보수적인 근거 부족 처리를 유지합니다. 새로운 데이터가 많아져도 모든 질문이 found가 되는 것은 아닙니다.
+
+운영 DB 교체 전에는 SQLite backup API로 영구 볼륨 안에 백업을 만듭니다. 실행 컨테이너에 파일을 복사할 때 컨테이너 app 사용자(uid 10001)가 읽을 수 있게 합니다. `python -m academic_mcp.ingest --snapshot ... --db /data/academic.sqlite3`로 적재하고, 실제 MCP에서 새 revision과 새로운 일정/문서 후보를 확인합니다. S3 데이터의 자동 갱신은 별도로 활성화하지 않습니다.

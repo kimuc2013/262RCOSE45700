@@ -86,11 +86,13 @@ class Store:
         finally:
             self._snapshot_lock.release()
 
-    def replace(self, chunks: list[dict], events: list[dict]):
+    def replace(self, chunks: list[dict], events: list[dict], *, metadata=None):
         # Hash the complete validated snapshot. Even date/metadata-only updates invalidate caches.
         encoded = json.dumps([sorted(chunks, key=lambda c: c['id']),
                               sorted(events, key=lambda e: json.dumps(e, sort_keys=True))],
                              ensure_ascii=False, sort_keys=True)
+        if metadata is not None:
+            encoded += json.dumps(metadata, ensure_ascii=False, sort_keys=True, allow_nan=False)
         revision = hashlib.sha256(encoded.encode()).hexdigest()
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -104,6 +106,11 @@ class Store:
             db.executemany("INSERT INTO events VALUES (?, ?)",
                            [(str(i), json.dumps(e, ensure_ascii=False)) for i, e in enumerate(events)])
             db.execute("INSERT OR REPLACE INTO meta VALUES ('revision', ?)", (revision,))
+            if metadata is None:
+                db.execute("DELETE FROM meta WHERE key='dataset'")
+            else:
+                db.execute("INSERT OR REPLACE INTO meta VALUES ('dataset', ?)",
+                           (json.dumps(metadata, ensure_ascii=False, allow_nan=False),))
             db.execute("DELETE FROM cache")
             db.execute("DELETE FROM vectors")
         return {"changed": True, "revision": revision, "chunks": len(chunks), "events": len(events)}
