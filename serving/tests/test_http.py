@@ -47,7 +47,7 @@ def test_streamable_http_roundtrip(tmp_path, monkeypatch):
                         assert all(not r.isError for r in responses)
                         payloads = [r.structuredContent for r in responses]
                         assert len({r['request_id'] for r in payloads}) == 20
-                        assert all(r['status'] == 'found' for r in payloads)
+                        assert all(r['status'] == 'evidence_available' for r in payloads)
                         if warmed:
                             assert all(r['metrics']['cache_fast_path'] for r in payloads)
                             assert all(r['metrics']['model_calls'] == 0 for r in payloads)

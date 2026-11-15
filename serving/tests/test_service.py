@@ -30,19 +30,24 @@ def test_official_calendar_and_missing_semester(service):
 
 def test_evidence_and_unanswerable_question(service):
     result = service.search('이중전공 신청자격은?')
-    assert result['status'] == 'found'
+    assert result['status'] == 'evidence_available'
     assert result['evidence'][0]['section'] == '신청자격'
     assert all(c['url'].startswith('https://registrar.korea.ac.kr/') for c in result['evidence'])
-    assert service.search('이중전공 합격컷 알려줘')['status'] == 'insufficient_evidence'
-    assert service.search('장학금 신청자격')['status'] == 'insufficient_evidence'
+    assert service.search('이중전공 합격컷 알려줘')['status'] == 'evidence_available'
+    assert service.search('장학금 신청자격')['status'] == 'evidence_available'
+    assert service.search('zxqv987654')['status'] == 'insufficient_evidence'
     assert service.search('내 성적 알려줘')['status'] == 'login_required'
     assert service.search('오늘 날씨')['status'] == 'out_of_scope'
 
 
 def test_local_followup_never_ignores_context(service):
     result = service.search('그럼 자격은?', history=[{'role': 'user', 'content': '이중전공 신청'}])
-    assert result['status'] == 'insufficient_evidence'
+    assert result['status'] == 'needs_clarification'
     assert result['evidence'] == []
+    standalone = service.search('이중전공 신청자격은?', history=[{'role': 'user', 'content': '학생증 발급'}])
+    assert standalone['status'] == 'evidence_available'
+    assert standalone['evidence'][0]['section'] == '신청자격'
+    assert service.search('그럼 이중전공 신청자격은?', history=[{'role': 'user', 'content': '이중전공 신청'}])['status'] == 'evidence_available'
 
 
 def test_cache_isolation_expiry_and_refresh(service):
@@ -91,3 +96,37 @@ def test_invalid_requests(service, kwargs):
     args = {'query': '이중전공 자격', **kwargs}
     with pytest.raises(ValueError):
         service.search(**args)
+
+
+def test_arbitrary_document_is_usable_without_topic_allowlist(service):
+    # Deliberately unrelated fixture topic, not an actual university policy.
+    _, chunks, events = service.store.snapshot()
+    chunks = [{**chunks[0], 'id': 'fixture-space', 'doc_title': '테스트용 실습공간',
+               'section': '예약 방법', 'text': '실습공간 예약은 안내 페이지에서 신청합니다.'}]
+    service.store.replace(chunks, events)
+    result = service.search('실습공간 예약 방법')
+    assert result['status'] == 'evidence_available'
+    assert result['evidence'][0]['id'] == 'fixture-space'
+    assert result['answerability'] == 'client_must_check_source'
+    # A positive lexical match never promises a missing numeric/date answer.
+    missing = service.search('실습공간 예약 비용은 얼마야?')
+    assert missing['status'] == 'evidence_available'
+    assert '질문의 일부만 확인되면' in missing['answer_instructions']
+    assert '원문에 없는 날짜, 합격컷, 조건' in missing['answer_instructions']
+    assert service.search('zxqv987654')['evidence'] == []
+
+
+def test_policy_revision_does_not_reuse_old_refusals(service):
+    from academic_mcp.cache import identity
+    query = '이중전공 자격'
+    old_profile = {**service.profile(), 'retrieval_policy': 'sample-allowlist-v1'}
+    old_key = identity(query, [], 5, None, None, old_profile, service.today().isoformat())
+    revision = service.store.revision()
+    with service.store.connect() as db:
+        db.execute('INSERT INTO cache VALUES (?, ?, ?, ?)',
+                   (old_key, revision, service.clock() + 300,
+                    json.dumps(service.response(revision, message='old refusal'))))
+    result = service.search(query)
+    assert not result['cache_hit']
+    assert result['status'] == 'evidence_available'
+    assert service.search(query)['cache_hit']

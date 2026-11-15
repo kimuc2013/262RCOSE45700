@@ -69,7 +69,7 @@ class Console:
 
     def result(self, data):
         status = data['status']
-        kind = {'found': 'good', 'insufficient_evidence': 'warning',
+        kind = {'found': 'good', 'evidence_available': 'good', 'needs_clarification': 'warning', 'insufficient_evidence': 'warning',
                 'login_required': 'info', 'out_of_scope': 'warning'}.get(status, 'error')
         metrics = data.get('metrics', {})
         badges = [self.paint(status.upper(), kind),

@@ -75,6 +75,8 @@ def test_no_vectors_and_no_threshold_are_not_silently_accepted(tmp_path, models,
     store.save_vectors(revision, models.base + '|' + models.embedding, [[1, 0]] * len(chunks))
     monkeypatch.setattr(models, 'embed', lambda texts: [[1, 0]])
     monkeypatch.setattr(models, 'rerank', lambda query, docs: [(i, 0.99) for i in range(len(docs))])
+    assert service.search('이중전공 자격')['status'] == 'evidence_available'
+    service.threshold = 1.0
     assert service.search('이중전공 자격')['status'] == 'insufficient_evidence'
 
 

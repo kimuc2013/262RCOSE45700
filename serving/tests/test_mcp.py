@@ -27,7 +27,8 @@ def test_real_stdio_protocol(tmp_path):
                 prompts = await session.list_prompts()
                 assert prompts.prompts[0].name == 'grounded_answer'
                 result = await session.call_tool('search_academic_info', {'query': '이중전공 합격컷'})
-                assert result.structuredContent['status'] == 'insufficient_evidence'
+                assert result.structuredContent['status'] == 'evidence_available'
+                assert '원문에 없는 날짜, 합격컷' in result.structuredContent['answer_instructions']
                 invalid = await session.call_tool('search_academic_info', {'query': '이중전공', 'top_k': 99})
                 assert invalid.isError
 
