@@ -1,5 +1,9 @@
 # 로컬 검증 기록
 
+## 2026-11-15 CI 승인 main 자동 배포 준비
+
+추가 IAM 역할 생성 대신 EC2 systemd 타이머가 main의 공개 GitHub push CI를 확인하는 경로를 구현했습니다. 전체 로컬 테스트는 72개 통과했습니다. 현재 SHA 생략, CI 미완료 시 차단, 검사 도중 main 변경 시 보류, 배포 실패 SHA의 반복 실행 차단, 예상 릴리스 링크 확인 및 다른 브랜치/저장소/PR/실패 CI 차단을 검사했습니다. SSM Online 상태도 확인했으나 현재 EC2 역할에 iam:ListRoles가 허용되지 않아 OIDC 역할을 설정하지 않았습니다.
+
 ## 2026-11-15 EC2 샘플 MVP 배포
 
 Amazon Linux 2023 x86_64, 메모리 약 2GB 환경에 Docker 25.0.18과 체크섬을 검증한 Compose v5.7.1을 설치했습니다. GitHub main 커밋 `c18835bc42fe5d2511e7e01f4e5caec9e64249f1`을 `deploy/deploy.sh`로 배포했습니다. 배포 코드를 수정하지 않고 최초 실제 EC2 실행을 완료했습니다. 이미지 빌드, 빈 DB의 샘플 적재(일정 43건, 청크 9개), 컨테이너 기동과 실제 MCP smoke 호출이 성공했습니다.

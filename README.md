@@ -62,4 +62,4 @@ docker compose exec -T mcp python -m academic_mcp.terminal_demo --url http://127
 
 ## 자동 배포
 
-GitHub Actions가 PR과 main 변경에서 테스트 및 컨테이너 빌드를 실행합니다. AWS SSM과 OIDC 준비 후 `DEPLOY_ENABLED=true`를 설정하면 main 병합 시 EC2 배포와 MCP 검사까지 실행합니다. 배포 변수 미설정 시 deploy job은 건너뜁니다. 실제 활성화 조건과 관리자 요청 정책은 [배포 문서](serving/docs/DEPLOYMENT.md)를 참고하세요.
+GitHub Actions가 PR과 main 변경에서 테스트 및 컨테이너 빌드를 실행합니다. EC2의 자동 배포 타이머는 약 2분마다 main을 확인하고, 해당 SHA의 CI가 성공하면 배포와 MCP 검사를 실행합니다. 현재 모드는 `ec2-pull`이며 IAM 역할이 필요한 SSM job은 비활성입니다. 실제 배포 결과는 EC2 로그에서 확인합니다. 설치와 실패 복구 절차는 [배포 문서](serving/docs/DEPLOYMENT.md)를 참고하세요.
