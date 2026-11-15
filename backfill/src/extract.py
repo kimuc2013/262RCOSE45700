@@ -16,6 +16,7 @@
 import base64
 import hashlib
 import os
+import re
 import sys
 import warnings
 from collections import Counter
@@ -116,6 +117,11 @@ class HtmlExtractor:
         if text:
             self.add({"type": "paragraph", "text": text, "extraction_method": "html"})
 
+    @staticmethod
+    def is_sentence(el: Tag) -> bool:
+        text = " ".join(norm(inline_text(el)).split("\n")).strip()
+        return len(text) > 30 or text.endswith(("다.", "다"))
+
     def heading(self, el: Tag):
         self.flush()
         level = HEADING_LEVEL[el.name]
@@ -147,8 +153,14 @@ class HtmlExtractor:
                     self.walk(child)
                 else:
                     self.buffer.append(inline_text(child))
+            elif name in HEADING_LEVEL and name in ("h2", "h3") and self.is_sentence(child):
+                self.buffer.append(inline_text(child) + "\n")  # 큰 글씨로 강조한 문장(h2·h3)은 제목이 아니라 문단 (학생증 등)
             elif name in HEADING_LEVEL:
                 self.heading(child)
+            elif name in ("ul", "ol") and child.find(list(HEADING_LEVEL)):
+                self.flush()                                   # 목록 안에 소제목이 있는 페이지(학생증 등): 목록이 아니라 구획으로 읽음
+                self.walk(child)
+                self.flush()
             elif name in ("ul", "ol"):
                 self.flush()
                 items = list_items(child)
@@ -173,14 +185,45 @@ class HtmlExtractor:
                 self.flush()
 
 
+# 동작을 가리키는 버튼 글자 ("인터넷 증명서 신청", "증명서 위변조 확인", "수강신청 시스템" 등).
+# 끝의 "바로가기"는 떼고 판단 ("소속학과(부) 행정팀 바로가기"는 부서 이름이라 남김, 정제 단계에서 "바로가기"만 뗌)
+ACTION_BUTTON = re.compile(r"(?:신청|확인|조회|시스템)$")
+GO_SUFFIX = re.compile(r"\s*바로\s?가기$")
+
+
+def drop_button_links(soup: BeautifulSoup) -> None:
+    """줄에 링크 버튼(a.btn-link, a.btn-link02)만 있고 글자가 동작을 가리키면 지운다 (2026-11-12).
+    "소속학과(부) 행정팀", "외국어센터", "K-MOOC"처럼 버튼 글자가 곧 내용(부서·기관 이름)인 것은 남기고,
+    문장 안에 끼어 있는 버튼은 문장이 깨지므로 남긴다. 첨부 다운로드 버튼(btn-down)은 첨부 제목이라 남긴다."""
+    def is_button(node) -> bool:
+        return isinstance(node, Tag) and node.name == "a" and any(
+            c.startswith("btn-link") for c in node.get("class", [])) and bool(
+            ACTION_BUTTON.search(GO_SUFFIX.sub("", node.get_text(" ", strip=True))))
+    for parent in {a.parent for a in soup.find_all(is_button)}:
+        rest = [n for n in parent.children
+                if not is_button(n) and not (isinstance(n, Tag) and n.name == "br")
+                and (n.get_text(strip=True) if isinstance(n, Tag) else str(n).strip())]
+        if not rest:
+            for a in parent.find_all(is_button, recursive=False):
+                a.decompose()
+
+
 def extract_html(meta: dict) -> list[dict]:
     soup = BeautifulSoup((RAW_HTML / meta["file"]).read_bytes(), "lxml", from_encoding="utf-8")
+    drop_button_links(soup)
     main = soup.select_one("#jwxe_main_content")
     if main is None:
         return []
     ex = HtmlExtractor(meta["url"])      # 페이지 제목(h3)은 doc_title에 이미 있으므로 경로에 넣지 않음
     ex.walk(main)
     ex.flush()
+    # 본문 영역 밖의 안내 상자 (6개 페이지, 예: 이중전공의 전공디자인센터 상담 안내). 2026-11-12 누락 발견
+    for box in soup.select("section.content .border-box-red"):
+        if main in box.parents:
+            continue
+        ex.path = []
+        ex.walk(box)
+        ex.flush()
     # 문의처는 본문 영역 밖의 별도 블록(.contact-wrap)에 있음 (59개 페이지). 부서 단위 안내라 함께 추출
     contact = soup.select_one(".contact-wrap")
     if contact is not None:
@@ -247,6 +290,28 @@ def apply_vlm(blocks: list[dict], vlm: VlmReader) -> list[dict]:
 # 2026-11-02 기준 PDF 표 303개 중 233개는 칸 구조 유지, 70개는 줄 단위
 MIN_TABLE_COVERAGE = 1.0
 
+# 새 항목으로 시작하는 줄: 앞 줄과 이어 붙이지 않음 (항 ①, 목록 기호, 번호, 조·장·절)
+NEW_ITEM = re.compile(r"^\s*([①-⑳]|[-*※•○□■◦▶☞]|\d+[.)]\s|\(\d+\)|[가-하][.)]\s|제\s*\d+\s*(조|장|절|관)|\[)")
+WRAP_TOLERANCE = 0.12      # 줄 오른쪽 끝이 쪽 글자 영역 오른쪽 끝에서 이 비율 안이면 "자리가 없어 넘어간 줄" (4·8·12·16% 비교, 12%부터 그대로)
+
+
+def join_pdf_lines(lines: list[dict], right_edge: float) -> str:
+    """PDF 줄을 이어 붙임. 오른쪽 끝까지 찬 줄은 자리가 없어 넘어간 것이라 다음 줄과 이음
+    (한글끼리는 붙이고 그 밖에는 띄움). 짧게 끝난 줄과 새 항목 앞은 줄바꿈 유지."""
+    if not lines:
+        return ""
+    left = min(l["x0"] for l in lines)
+    margin = (right_edge - left) * WRAP_TOLERANCE
+    out = lines[0]["text"]
+    for prev, cur in zip(lines, lines[1:]):
+        wrapped = prev["x1"] >= right_edge - margin and not NEW_ITEM.match(cur["text"])
+        if wrapped:
+            a, b = out[-1:], cur["text"][:1]
+            out += ("" if re.match(r"[가-힣]", a) and re.match(r"[가-힣]", b) else " ") + cur["text"]
+        else:
+            out += "\n" + cur["text"]
+    return out
+
 
 def char_coverage(source: str, extracted: str) -> float:
     """source의 글자(공백 제외) 중 extracted에도 있는 비율."""
@@ -270,23 +335,41 @@ def extract_pdf(path: Path) -> list[dict]:
                 region = page.crop(t.bbox).extract_text() or ""
                 if char_coverage(region, " ".join(c for r in rows for c in r)) >= MIN_TABLE_COVERAGE:
                     if rows:
-                        table_blocks.append({"section_path": [], "page": no, "type": "table", "caption": None,
-                                             "rows": rows, "extraction_method": "pdf_text"})
+                        table_blocks.append((t.bbox[1], {"section_path": [], "page": no, "type": "table",
+                                                         "caption": None, "rows": rows, "extraction_method": "pdf_text"}))
                 elif norm(region):
                     # 칸 사이 선이 없어 칸을 못 나눈 표: 칸 구조 대신 표 영역 글자를 줄 단위로 보존
-                    table_blocks.append({"section_path": [], "page": no, "type": "table_text",
-                                         "text": norm(region), "extraction_method": "pdf_text"})
+                    table_blocks.append((t.bbox[1], {"section_path": [], "page": no, "type": "table_text",
+                                                     "text": norm(region), "extraction_method": "pdf_text"}))
 
             def outside_tables(obj, boxes=boxes):
                 x0, top, x1, bottom = obj.get("x0", 0), obj.get("top", 0), obj.get("x1", 0), obj.get("bottom", 0)
                 return not any(b[0] <= x0 and x1 <= b[2] and b[1] <= top and bottom <= b[3] for b in boxes)
 
-            text = norm(page.filter(outside_tables).extract_text() or "")
-            if text:
-                blocks.append({"section_path": [], "page": no, "type": "paragraph", "text": text,
-                               "extraction_method": "pdf_text"})
-            blocks.extend(table_blocks)
-            if len(text) < MIN_PDF_PAGE_CHARS and not tables:
+            # 표 밖 글자를 줄 단위로 읽어, 표를 쪽 안의 실제 위치(위에서부터)에 끼워 넣음
+            lines = page.filter(outside_tables).extract_text_lines()
+            right_edge = max((l["x1"] for l in lines), default=0)
+            pending = sorted(table_blocks, key=lambda x: x[0])
+            buffer: list[dict] = []
+            text_chars = 0
+
+            def flush():
+                nonlocal text_chars
+                text = norm(join_pdf_lines(buffer, right_edge))
+                buffer.clear()
+                if text:
+                    text_chars += len(text)
+                    blocks.append({"section_path": [], "page": no, "type": "paragraph", "text": text,
+                                   "extraction_method": "pdf_text"})
+
+            for line in lines:
+                while pending and pending[0][0] < line["top"]:
+                    flush()
+                    blocks.append(pending.pop(0)[1])
+                buffer.append(line)
+            flush()
+            blocks.extend(b for _, b in pending)
+            if text_chars < MIN_PDF_PAGE_CHARS and not tables:
                 blocks.append({"section_path": [], "page": no, "type": "image", "text": None,
                                "alt": None, "src": None, "extraction_method": "none"})
     return blocks

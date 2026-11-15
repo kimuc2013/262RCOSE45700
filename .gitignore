@@ -24,6 +24,9 @@ backfill/data/raw/
 backfill/data/extracted/
 backfill/data/clean/
 
+# 백필: 넘겨주는 파일(chunks.jsonl, manifest.json, changes.json)은 원문 발췌가 들어가 S3로만 전달
+backfill/data/export/
+
 # 백필: 단계별 실행 기록 (실행할 때마다 쌓이는 로컬 기록)
 backfill/data/reports/
 

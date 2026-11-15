@@ -16,10 +16,12 @@
    - 표: 캡션에 '세종캠퍼스'가 있으면 표 삭제, 머리글에 '세종'이 있는 열 삭제,
      '세종'만 있는 행 삭제, '서울, 세종' 칸은 '서울'로
    - '서울 및 세종캠퍼스 …'처럼 두 캠퍼스를 함께 말하는 문장은 남김
+1-1. 대학원 (HTML만, 2026-11-12): 머리글이 대학원인 표 열, 첫 칸이 대학원이고 학부가 없는 표 행, "대학원"으로 시작하는 줄,
+     학부 언급 없는 대학원 신입생 일정 줄 삭제. "학부 및 대학원"처럼 함께 말하는 문장과 학·석사 연계과정은 남김
 2. 개인 연락처: 이메일 주소 삭제. 전화번호는 모두 부서·업무 단위(사람 이름 없음)라 남김 (2026-11-02 확인)
 3. 버튼·메뉴 글자: '고려대학교 홈페이지 바로가기' 같은 버튼만 있는 줄 삭제, 줄 끝 '바로가기'·'☜클릭' 삭제
 4. PDF 쪽 번호('- 1 -') 삭제
-5. sources.yaml의 clean.drop_ranges에 지정한 부분 삭제 (예: 현장실습 PDF의 '6. 운영 교과목 안내')
+5. sources.yaml의 clean.drop_ranges에 지정한 부분, clean.drop_lines에 지정한 줄 삭제 (예: 현장실습 PDF의 '6. 운영 교과목 안내')
 6. 영어 번역본 삭제 (2026-11-02 결정: 같은 내용이 한국어·영어로 다 있으면 한국어만)
    - PDF: 한국어 쪽이 있는 문서에서 한글 비율 20% 미만인 쪽
    - HTML: 소제목에 한글이 없고 내용의 한글 비율 5% 미만인 섹션 (등록금 페이지의 영어 섹션)
@@ -35,7 +37,7 @@ from extract import EXTRACTED, doc_stats, render_md
 
 CLEAN = DATA / "clean"
 
-BUTTON_LINES = {"고려대학교 홈페이지 바로가기", "교육과정표 바로가기", "새창으로 열기", "포털시스템", "FAQ 바로가기"}
+BUTTON_LINES = {"고려대학교 홈페이지 바로가기", "교육과정표 바로가기", "새창으로 열기", "포털시스템", "FAQ 바로가기", "시청하기"}
 EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+(?:SEClipBoard_synap)?")
 PAGE_NO = re.compile(r"^-\s*\d+\s*-$")
 SEJONG_PAREN = re.compile(r"\s*\(세종[^()]*\)")                 # (세종: 044-860-1126), (세종)
@@ -43,10 +45,19 @@ SEJONG_SLASH = re.compile(r"\s*/\s*[^/]*\(세종\)[^/]*?(?=\s*/|$)")  # / 학부
 SEJONG_COMMA = re.compile(r",\s*세종[^,)/]*")                    # , 세종 학생복지팀
 
 removed = Counter()
+DROP_LINES: set[str] = set()          # sources.yaml의 clean.drop_lines (main에서 읽음)
 
 
 def is_sejong_only(text: str) -> bool:
     return "세종" in text and "서울" not in text
+
+
+def is_graduate_only(text: str) -> bool:
+    """대학원에만 해당하는 줄·칸 (학부 공통 페이지 안의 대학원 안내). 학부와 함께 말하는 문장은 남김."""
+    t = text.strip().lstrip("-*※· ").strip()
+    if "대학원" not in t or "학부" in t:
+        return False
+    return t.startswith("대학원") or ("신입생" in t and "대학원" in t)
 
 
 def clean_line(line: str, html: bool) -> str | None:
@@ -56,6 +67,9 @@ def clean_line(line: str, html: bool) -> str | None:
 
     if body in BUTTON_LINES:
         removed["버튼 줄"] += 1
+        return None
+    if body in DROP_LINES:
+        removed["지정한 줄"] += 1
         return None
     if PAGE_NO.match(body):
         removed["PDF 쪽 번호"] += 1
@@ -71,6 +85,9 @@ def clean_line(line: str, html: bool) -> str | None:
         removed["이메일"] += len(EMAIL.findall(body))
         body = EMAIL.sub("", body)
         body = re.sub(r"\s*,\s*(,|$)", r"\1", body).strip(" ,/:")
+        body = re.sub(r"\(\s*e-?mail\s*:?\s*\)", "", body, flags=re.I).strip()   # "(e-mail: )"처럼 주소만 빠진 괄호
+        if re.fullmatch(r"(?i)(e-?mail|이메일|메일)\s*:?", body):
+            return None                                        # 주소가 빠지고 이름표만 남은 줄
 
     if html and "세종" in body:
         before = body
@@ -86,6 +103,10 @@ def clean_line(line: str, html: bool) -> str | None:
         if is_sejong_only(body):
             removed["세종 줄 삭제"] += 1
             return None
+
+    if html and is_graduate_only(body):
+        removed["대학원 줄 삭제"] += 1
+        return None
 
     body = body.strip()
     return indent + body if body else None
@@ -115,6 +136,10 @@ def clean_table(block: dict, html: bool) -> dict | None:
             removed["세종 표 삭제"] += 1
             return None
         header = rows[0] if rows else []
+        # 세종 지역번호(044)로만 구분되는 표: "세종" 글자 없이 연락처(044) 머리글만 있음 (2026-11-12 발견)
+        if any("(044)" in c for c in header) and not any("(02)" in c for c in header):
+            removed["세종 표 삭제"] += 1
+            return None
         drop_cols = {i for i, c in enumerate(header) if "세종" in c and "서울" not in c}
         if drop_cols:
             removed["세종 열 삭제"] += len(drop_cols)
@@ -124,7 +149,24 @@ def clean_table(block: dict, html: bool) -> dict | None:
             if any(is_sejong_only(c) for c in r) and not any("서울" in c for c in r):
                 removed["세종 행 삭제"] += 1
                 continue
+            if any(re.search(r"(?<!\d)044-\d", c) for c in r) and not any(re.search(r"(?<!\d)0?2-\d{3,4}-", c) for c in r):
+                removed["세종 행 삭제(044)"] += 1                # 세종 지역번호만 있는 행
+                continue
             kept.append([re.sub(r"서울\s*,\s*세종", "서울", c) for c in r])
+        rows = kept
+        # 대학원: 머리글이 대학원인 열, 첫 칸(빈칸 제외)이 대학원이고 학부가 없는 행 삭제 (2026-11-12)
+        header = rows[0] if rows else []
+        grad_cols = {i for i, c in enumerate(header) if "대학원" in c and "학부" not in c}
+        if grad_cols and len(grad_cols) < len(header):
+            removed["대학원 열 삭제"] += len(grad_cols)
+            rows = [[c for i, c in enumerate(r) if i not in grad_cols] for r in rows]
+        kept = []
+        for i, r in enumerate(rows):
+            first = next((c for c in r if c.strip()), "")
+            if i > 0 and "대학원" in first and not any("학부" in c for c in r):
+                removed["대학원 행 삭제"] += 1
+                continue
+            kept.append(r)
         rows = kept
     rows = [[clean_line(c, html) or "" for c in r] for r in rows]
     rows = [r for r in rows if any(r)]
@@ -134,6 +176,9 @@ def clean_table(block: dict, html: bool) -> dict | None:
 def clean_block(block: dict, html: bool) -> dict | None:
     if html and any("세종캠퍼스" in p for p in block["section_path"]):
         removed["세종 블록 삭제"] += 1
+        return None
+    if html and any(p.startswith("대학원") for p in block["section_path"]):
+        removed["대학원 블록 삭제"] += 1                         # 소제목 자체가 "대학원"인 섹션 (휴학 신청방법 > 대학원)
         return None
     t = block["type"]
     if t == "list":
@@ -212,7 +257,9 @@ def drop_english_translation(blocks: list[dict], html: bool) -> list[dict]:
 
 def main():
     CLEAN.mkdir(parents=True, exist_ok=True)
-    drop_ranges = load_sources().get("clean", {}).get("drop_ranges", {})
+    clean_cfg = load_sources().get("clean", {})
+    drop_ranges = clean_cfg.get("drop_ranges", {})
+    DROP_LINES.update(clean_cfg.get("drop_lines", []))
     report = {"run_at": now_iso(), "docs": {}}
     for path in sorted(EXTRACTED.glob("*.json")):
         doc = read_json(path)
