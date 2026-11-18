@@ -2,6 +2,9 @@ import asyncio
 import socket
 
 import uvicorn
+import pytest
+from test_retrieval import setup as retrieval_setup
+from academic_mcp.service import AcademicService
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
@@ -10,11 +13,17 @@ from academic_mcp.server import create_server
 from test_service import SAMPLES
 
 
-def test_streamable_http_roundtrip(tmp_path, monkeypatch):
+@pytest.mark.parametrize("mode", ["local", "retrieval"])
+def test_streamable_http_roundtrip(tmp_path, monkeypatch, retrieval_setup, mode):
     db = str(tmp_path / 'http.sqlite3')
     ingest(db, SAMPLES)
     monkeypatch.setenv('ACADEMIC_DB', db)
     monkeypatch.setenv('MODEL_MODE', 'local')
+    if mode == 'retrieval':
+        store, fake, retriever = retrieval_setup
+        retriever.build_index()
+        service = AcademicService(store, retriever=retriever)
+        monkeypatch.setattr('academic_mcp.server.build_service', lambda: service)
 
     async def run():
         sock = socket.socket()
@@ -51,6 +60,7 @@ def test_streamable_http_roundtrip(tmp_path, monkeypatch):
                         if warmed:
                             assert all(r['metrics']['cache_fast_path'] for r in payloads)
                             assert all(r['metrics']['model_calls'] == 0 for r in payloads)
+            await check(f'http://127.0.0.1:{port}/mcp', search=True)
         finally:
             server.should_exit = True
             await task

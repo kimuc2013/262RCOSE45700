@@ -37,6 +37,7 @@ elif name=='docker':
         log.write(json.dumps({'args':args,'image':os.getenv('ACADEMIC_IMAGE')})+'\\n')
     if args[0]=='inspect': print('sha256:previous')
     elif args[0]=='build' and os.getenv('FAIL_BUILD'): sys.exit(1)
+    elif 'academic_mcp.prepare_retrieval' in args and os.getenv('FAIL_INDEX'): sys.exit(1)
     elif 'run' in args and 'revision())' in args[-1]: print('existing-revision')
     elif 'exec' in args and os.getenv('FAIL_SMOKE') and os.getenv('ACADEMIC_IMAGE','').endswith('a'*40): sys.exit(1)
 ''')
@@ -96,3 +97,11 @@ def test_ssm_sender_propagates_remote_deployment_failure(monkeypatch):
     monkeypatch.setattr(module, 'aws', lambda *args: next(responses))
     with pytest.raises(RuntimeError, match='health failed'):
         module.main()
+
+
+def test_index_preparation_failure_keeps_existing_service(host):
+    result, calls = run(host, FAIL_INDEX='1')
+    assert result.returncode != 0
+    assert (host[0] / 'current').resolve().name == 'previous'
+    assert not any('up' in c['args'] for c in calls)
+    assert 'existing service retained' in result.stderr

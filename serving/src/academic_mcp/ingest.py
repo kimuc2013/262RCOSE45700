@@ -56,12 +56,20 @@ def main():
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--samples", type=Path)
     source.add_argument("--snapshot", type=Path, help="Verified backfill manifest and JSONL directory")
+    parser.add_argument("--reindex", action="store_true", help="Build retrieval vectors after a successful import")
     args = parser.parse_args()
     if args.snapshot:
         from .snapshot import ingest_snapshot
         result = ingest_snapshot(args.db, args.snapshot)
     else:
         result = ingest(args.db, args.samples)
+    if args.reindex:
+        from .retrieval import Retriever
+        retriever = Retriever.from_env(Store(args.db))
+        try:
+            result['index'] = retriever.build_index()
+        finally:
+            retriever.close()
     print(json.dumps(result, ensure_ascii=False))
 
 

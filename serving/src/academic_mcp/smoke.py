@@ -7,7 +7,7 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
 
-async def check(url):
+async def check(url, *, search=False):
     async with asyncio.timeout(15):
         async with streamable_http_client(url) as (read, write, _):
             async with ClientSession(read, write) as session:
@@ -21,14 +21,22 @@ async def check(url):
                 data = result.structuredContent
                 if data.get('revision') in (None, 'empty'):
                     raise RuntimeError('No data loaded')
+                if search:
+                    result = await session.call_tool('search_academic_info', {'query': '이중전공 신청자격은?'})
+                    if result.isError or not result.structuredContent:
+                        raise RuntimeError('Search MCP call failed')
+                    searched = result.structuredContent
+                    if searched.get('revision') != data['revision'] or not searched.get('evidence'):
+                        raise RuntimeError('Search data/index health check failed')
                 print(json.dumps({'ok': True, 'revision': data['revision'], 'status': data['status']}))
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--url', default='http://127.0.0.1:8000/mcp')
+    parser.add_argument("--search", action="store_true")
     args = parser.parse_args()
-    asyncio.run(check(args.url))
+    asyncio.run(check(args.url, search=args.search))
 
 
 if __name__ == '__main__':

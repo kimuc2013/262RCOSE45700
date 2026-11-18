@@ -4,7 +4,7 @@
 
 - 코드: `serving/src/academic_mcp/retrieval.py`
 - 테스트: `serving/tests/test_retrieval.py`
-- 현재 서빙 코드는 이 모듈을 호출하지 않습니다. 연결하기 전까지 운영 동작은 바뀌지 않습니다.
+- 서빙은 `MODEL_MODE=retrieval`일 때 이 모듈을 호출합니다. 기본 local 모드는 BM25입니다. 운영 설정 전환과 실제 API 검증이 별도로 필요합니다.
 
 ## 호출
 
@@ -115,3 +115,23 @@ python -m academic_mcp.retrieval search "휴학은 최대 몇 년?"  # 모듈만
 | 검색 1회 지연 | p50 약 1.07초, p95 약 1.10초(리랭킹이 약 850ms) |
 
 동시 요청에서의 지연과 엔드포인트의 동시 요청 한도는 확인하지 않았습니다. 임계값은 아직 정하지 않았습니다.
+
+## 서빙 연결과 운영 (2026-11-18)
+
+서빙은 서버 시작 시 Retriever.from_env(store)를 한 번 생성하며, 기존 시간 예산과 동시 요청 제어가 적용되는 작업 스레드에서 search를 호출합니다. 서빙이 이미 읽은 chunks와 revision을 그대로 넘기고, 반환 status/score/임계값을 재판정하지 않습니다. content_kind, 최신성 경고와 요청 지표만 서빙에서 추가합니다. retriever.profile()은 서빙 캐시 키에 포함됩니다. 개인정보 조회와 범위 밖 질문은 검색 전에 차단하고, 모호한 후속 질문은 클라이언트가 독립 질문으로 다시 호출합니다. 이 모듈에 재작성 API가 추가된 것은 아닙니다.
+
+1. 실제 endpoint와 RETRIEVAL_* 설정을 Git 밖 runtime.env에 넣고 MODEL_MODE=retrieval로 설정합니다. Compose는 위의 모든 RETRIEVAL_* 값을 전달합니다. 종전 MODEL_BASE_URL/REWRITE_MODEL 등은 이 모드에 필요하지 않습니다.
+2. 배포는 새 컨테이너 활성화 전에 `python -m academic_mcp.prepare_retrieval`로 현재 revision/index_key의 색인 존재를 확인하고, 없으면 만듭니다. API 준비 실패 시 기존 컨테이너를 유지합니다. 활성화 후 실제 검색까지 smoke 검사하며, 실패하면 이전 이미지 복구를 시도합니다.
+3. 운영 중 새 스냅샷을 반영할 때는 서버 검색을 일시 중지하는 점검 시간을 두고 다음을 실행합니다. 적재 트랜잭션과 모델 API 색인은 하나의 원자적 작업이 아닙니다. 색인 실패 시 새 자료는 적재되지만 검색은 기술 오류를 내므로 재색인을 완료한 후 다시 개방합니다. BM25로 자동 전환하지 않습니다.
+
+```bash
+# 실제 환경변수가 전달된 컨테이너에서 실행
+python -m academic_mcp.ingest --db /data/academic.sqlite3 --snapshot /path/to/snapshot --reindex
+# 기존 자료에 색인이 없을 때 준비 또는 확인
+python -m academic_mcp.prepare_retrieval
+# 기존 색인의 강제 재생성은 모듈 CLI 사용 후 서버 재시작
+python -m academic_mcp.retrieval index
+python -m academic_mcp.smoke --search
+```
+
+최종 임계값은 모델 담당자의 검토 결과를 사용합니다. 서빙 연동을 위해 임시 점수를 운영 기본값으로 넣지 않습니다. 테스트의 모의 API 결과는 실제 API의 품질/지연 측정으로 해석하지 않습니다.
