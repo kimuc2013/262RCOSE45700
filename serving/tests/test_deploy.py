@@ -105,3 +105,15 @@ def test_index_preparation_failure_keeps_existing_service(host):
     assert (host[0] / 'current').resolve().name == 'previous'
     assert not any('up' in c['args'] for c in calls)
     assert 'existing service retained' in result.stderr
+
+
+def test_public_gateway_only_activates_when_private_config_exists(host):
+    base, env = host
+    (base / 'config' / 'public.env').write_text('prepared-private-config')
+    script = base / 'releases' / SHA / 'serving' / 'deploy' / 'install-public.sh'
+    script.parent.mkdir()
+    script.write_text('test "$KU_DEPLOY_ROOT" = "'+str(base)+'"\ntouch "$KU_DEPLOY_ROOT/public-installed"\n')
+    result, calls = run(host)
+    assert result.returncode == 0, result.stderr
+    assert (base / 'public-installed').exists()
+    assert (base / 'current').resolve().name == SHA

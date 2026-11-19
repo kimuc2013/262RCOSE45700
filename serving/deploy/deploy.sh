@@ -77,6 +77,12 @@ for attempt in {1..12}; do
     sleep 2
 done
 if [[ "$healthy" != true ]]; then rollback 1; fi
+# The operator prepares this private file before enabling public team access.
+# It contains auth tokens and stays outside Git. The gateway has separate
+# persistent certificate volumes and only exposes authenticated MCP over TLS.
+if [[ -f "$base/config/public.env" ]]; then
+    KU_DEPLOY_ROOT="$base" bash "$release/serving/deploy/install-public.sh"
+fi
 ln -sfn "$release" "$base/current.next"
 mv -Tf "$base/current.next" "$base/current"
 trap - ERR

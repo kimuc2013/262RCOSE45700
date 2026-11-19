@@ -6,7 +6,7 @@
 
 1. 도메인을 EC2 IP로 연결하고 인바운드 TCP 80/443을 허용합니다. 도메인이 없으면 `ku-team7.<EC2-IP를-하이픈으로>.sslip.io`처럼 IP DNS를 사용할 수 있습니다. EC2 중지 후 재시작으로 IP가 바뀌면 주소와 인증서 설정을 갱신해야 합니다. 인스턴스 reboot는 stop/start와 다릅니다.
 2. root 전용 `/opt/ku-academic-mcp/config/public.env`에 public/.env.example의 세 변수를 설정합니다. owner 키는 기존 키를 유지할 수 있고 팀 공유 키는 별도로 생성합니다. 예시의 문자열은 실제 키로 사용하지 않습니다. 실제 키를 Git이나 로그에 넣지 않습니다.
-3. `sudo bash serving/deploy/install-public.sh`를 실행합니다. 고정된 gateway 이미지, 리소스 제한, 로그 회전과 재시작 정책을 적용합니다. 기존 MCP 데이터와 자동 main 배포는 유지합니다.
+3. `sudo bash serving/deploy/install-public.sh`를 실행합니다. 이후 main 자동 배포도 private public.env가 있으면 MCP 검사 후 gateway 설정을 갱신합니다. 파일이 없으면 공개 gateway를 만들지 않습니다. 고정된 gateway 이미지, 리소스 제한, 로그 회전과 재시작 정책을 적용합니다. 기존 MCP 데이터와 자동 main 배포는 유지합니다.
 4. 외부에서 HTTPS 인증서 검증(검증 생략 옵션 금지), 무인증/잘못된 키의 401, 두 유효 키의 실제 MCP 초기화 및 도구 호출을 확인합니다.
 5. 성공한 뒤에만 기존 임시 터널과 그 종료 타이머를 정리하고 클라이언트 URL을 새 주소로 갱신합니다.
 
