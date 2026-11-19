@@ -37,8 +37,10 @@ def today_seoul():
 
 class AcademicService:
     def __init__(self, store: Store, models=None, *, clock=time.time, today=today_seoul,
-                 cache_ttl=300, rerank_min_score=None, limits=None, calendar_limits=None):
-        self.store, self.models = store, models
+                 cache_ttl=300, rerank_min_score=None, limits=None, calendar_limits=None, retriever=None):
+        if models is not None and retriever is not None:
+            raise ValueError('Choose retriever or legacy models, not both')
+        self.store, self.models, self.retriever = store, models, retriever
         self.clock, self.today, self.cache_ttl = clock, today, cache_ttl
         self.threshold = rerank_min_score
         self.model_revision = os.getenv('SERVING_MODEL_REVISION', 'unversioned')
@@ -57,11 +59,19 @@ class AcademicService:
         self._calendar_callers = 0
 
     def profile(self):
-        return {'mode': 'remote' if self.models else 'local_bm25', 'threshold': self.threshold,
+        return {'mode': self.retrieval_mode(), 'threshold': self.threshold,
+                'retriever': self.retriever.profile() if self.retriever else None,
                 'model_revision': self.model_revision, 'retrieval_policy': 'evidence-v2',
                 'instructions': hashlib.sha256(INSTRUCTIONS.encode()).hexdigest(),
                 'model': {key: getattr(self.models, key, None) for key in
                           ('base', 'embedding', 'rewriter', 'reranker', 'rerank_path')} if self.models else None}
+
+    def retrieval_mode(self):
+        return 'retrieval' if self.retriever else ('remote' if self.models else 'local_bm25')
+
+    def close(self):
+        if self.retriever:
+            self.retriever.close()
 
     def cache_key(self, query, history, top_k, semester, target):
         return identity(query, history, top_k, semester, target, self.profile(), self.today().isoformat())
@@ -231,7 +241,7 @@ class AcademicService:
     def _search(self, query, history, top_k, semester, target, metrics):
         self.validate(query, history, top_k, semester, target)
         revision = self.store.revision()
-        mode = 'remote' if self.models else 'local_bm25'
+        mode = self.retrieval_mode()
         # Cache BEFORE rewriting, with the complete original context in the key.
         # Different conversations must not share an answer just because a model
         # happens to rewrite both into the same underspecified sentence.
@@ -267,34 +277,49 @@ class AcademicService:
         snapshot_revision, chunks = self.store.table_snapshot('chunks')
         if snapshot_revision != revision:
             raise DataChanged('Source changed before retrieval; retry')
-        ranked = bm25(query, chunks)
-        checkpoint()
-        score_type = "bm25"
-        if self.models and chunks:
-            vectors = self.store.load_vectors(revision, self.models.base + '|' + self.models.embedding)
-            if len(vectors) != len(chunks):
-                raise ValueError("Vector count differs from chunk count")
-            metrics['model_calls'] += 1
-            embedded = self.models.embed([query])[0]
+        retrieval_metadata = {}
+        if self.retriever:
+            metrics['retrieval_calls'] = 1
+            retrieved = self.retriever.search(query, top_k, chunks=chunks, revision=revision)
             checkpoint()
-            dense = sorted(enumerate(cosine(embedded, vector) for vector in vectors), key=lambda r: -r[1])
-            candidates = fuse(ranked, dense)[:20]
+            # The module owns ranking and threshold decisions. Never rejudge its
+            # result using the serving legacy threshold or BM25 heuristics.
+            status = retrieved['status']
+            if status not in ('found', 'evidence_available', 'insufficient_evidence'):
+                raise ValueError('Unexpected retriever status')
+            selected = [{**row, 'content_kind': 'untrusted_source_excerpt'} for row in retrieved['evidence']]
+            retrieval_metadata = {key: retrieved[key] for key in ('score_type', 'min_rerank_score')}
+            if chunks:
+                metrics['model_calls'] += 1 + int(self.retriever.use_reranker)
+        else:
+            ranked = bm25(query, chunks)
             checkpoint()
-            metrics['model_calls'] += 1
-            reranked = self.models.rerank(query, [chunks[i]['text'] for i, _ in candidates])
-            checkpoint()
-            ranked = [(candidates[i][0], score) for i, score in reranked]
-            score_type = 'reranker'
-        selected = [{**chunks[i], "score": round(score, 6), "score_type": score_type,
-                     "content_kind": "untrusted_source_excerpt"} for i, score in ranked[:top_k]]
-        # Retrieval success and answerability are distinct. The client reads
-        # excerpts and answers only the supported parts, without topic allowlists.
-        status = 'evidence_available' if selected else 'insufficient_evidence'
-        if self.models and self.threshold is not None:
-            status = 'found' if selected and selected[0]['score'] >= self.threshold else 'insufficient_evidence'
+            score_type = "bm25"
+            if self.models and chunks:
+                vectors = self.store.load_vectors(revision, self.models.base + '|' + self.models.embedding)
+                if len(vectors) != len(chunks):
+                    raise ValueError("Vector count differs from chunk count")
+                metrics['model_calls'] += 1
+                embedded = self.models.embed([query])[0]
+                checkpoint()
+                dense = sorted(enumerate(cosine(embedded, vector) for vector in vectors), key=lambda r: -r[1])
+                candidates = fuse(ranked, dense)[:20]
+                checkpoint()
+                metrics['model_calls'] += 1
+                reranked = self.models.rerank(query, [chunks[i]['text'] for i, _ in candidates])
+                checkpoint()
+                ranked = [(candidates[i][0], score) for i, score in reranked]
+                score_type = 'reranker'
+            selected = [{**chunks[i], "score": round(score, 6), "score_type": score_type,
+                         "content_kind": "untrusted_source_excerpt"} for i, score in ranked[:top_k]]
+            # Retrieval success and answerability are distinct. The client reads
+            # excerpts and answers only the supported parts, without topic allowlists.
+            status = 'evidence_available' if selected else 'insufficient_evidence'
+            if self.models and self.threshold is not None:
+                status = 'found' if selected and selected[0]['score'] >= self.threshold else 'insufficient_evidence'
         result = self.response(revision, status, selected,
                                retrieval_mode=mode, query=query, semester=semester, target=target,
-                               answerability='client_must_check_source',
+                               answerability='client_must_check_source', **retrieval_metadata,
                                message=("검색된 원문에서 질문에 직접 답하는 사실만 인용하세요. 없는 항목은 확인 불가로 구분하세요."
                                    if status != 'insufficient_evidence' else "답변에 사용할 검색 근거를 확보하지 못했습니다."))
         result['freshness_warning'] = self.freshness(selected, semester)
@@ -339,16 +364,19 @@ class AcademicService:
 def build_service():
     from .models import RemoteModels
     mode = os.getenv('MODEL_MODE', 'local')
-    if mode not in ('local', 'remote'):
-        raise ValueError("MODEL_MODE must be local or remote")
+    if mode not in ('local', 'remote', 'retrieval'):
+        raise ValueError("MODEL_MODE must be local, remote or retrieval")
     threshold = os.getenv('RERANK_MIN_SCORE')
     limits = Limits(max_running=int(os.getenv('SERVING_MAX_RUNNING', '4')),
                     max_queued=int(os.getenv('SERVING_MAX_QUEUED', '8')),
                     max_waiters=int(os.getenv('SERVING_MAX_WAITERS', '64')),
                     request_timeout=float(os.getenv('SERVING_REQUEST_TIMEOUT', '10')),
                     queue_timeout=float(os.getenv('SERVING_QUEUE_TIMEOUT', '1')))
-    return AcademicService(Store(os.getenv('ACADEMIC_DB', 'data/academic.sqlite3')),
+    store = Store(os.getenv('ACADEMIC_DB', 'data/academic.sqlite3'))
+    from .retrieval import Retriever
+    return AcademicService(store,
                            RemoteModels() if mode == 'remote' else None,
+                           retriever=Retriever.from_env(store) if mode == 'retrieval' else None,
                            rerank_min_score=float(threshold) if threshold else None,
                            limits=limits, calendar_limits=Limits(max_running=2, max_queued=limits.max_queued,
                                max_waiters=limits.max_waiters, request_timeout=limits.request_timeout,

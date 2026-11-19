@@ -1,0 +1,36 @@
+services:
+  gateway:
+    image: caddy@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0
+    restart: unless-stopped
+    ports:
+      - "80:8080"
+      - "443:8443"
+    environment:
+      MCP_HOST: ${MCP_HOST:?Set MCP_HOST}
+      MCP_OWNER_TOKEN: ${MCP_OWNER_TOKEN:?Set MCP_OWNER_TOKEN}
+      MCP_TEAM_TOKEN: ${MCP_TEAM_TOKEN:?Set MCP_TEAM_TOKEN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - certificates:/data
+      - config:/config
+    networks:
+      - serving
+    mem_limit: 128m
+    cpus: 0.5
+    pids_limit: 128
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+networks:
+  serving:
+    external: true
+    name: ku-academic-mcp_default
+volumes:
+  certificates:
+  config:

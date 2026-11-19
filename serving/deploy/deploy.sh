@@ -62,13 +62,27 @@ revision=$(compose run --rm --no-deps mcp python -c 'import os; from academic_mc
 if [[ "$revision" == 'empty' ]]; then
     compose run --rm --no-deps mcp python -m academic_mcp.ingest --db /data/academic.sqlite3 --samples /samples
 fi
+# Prepare the new revision's vectors before replacing the serving container.
+# Local/legacy modes are a no-op; API/index failure prevents activation.
+if ! compose run --rm --no-deps mcp python -m academic_mcp.prepare_retrieval; then
+    # The existing container is still serving: do not restart it to roll back.
+    trap - ERR
+    echo 'Retrieval preparation failed; existing service retained' >&2
+    exit 1
+fi
 compose up -d --no-build --force-recreate mcp
 healthy=false
 for attempt in {1..12}; do
-    if compose exec -T mcp python -m academic_mcp.smoke; then healthy=true; break; fi
+    if compose exec -T mcp python -m academic_mcp.smoke --search; then healthy=true; break; fi
     sleep 2
 done
 if [[ "$healthy" != true ]]; then rollback 1; fi
+# The operator prepares this private file before enabling public team access.
+# It contains auth tokens and stays outside Git. The gateway has separate
+# persistent certificate volumes and only exposes authenticated MCP over TLS.
+if [[ -f "$base/config/public.env" ]]; then
+    KU_DEPLOY_ROOT="$base" bash "$release/serving/deploy/install-public.sh"
+fi
 ln -sfn "$release" "$base/current.next"
 mv -Tf "$base/current.next" "$base/current"
 trap - ERR

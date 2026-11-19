@@ -1,0 +1,31 @@
+{
+    admin off
+    http_port 8080
+    https_port 8443
+}
+
+{$MCP_HOST} {
+    request_body {
+        max_size 128KB
+    }
+    header Cache-Control "no-store"
+    @authorized {
+        path /mcp /mcp/*
+        header Authorization "Bearer {$MCP_OWNER_TOKEN}"
+        header Authorization "Bearer {$MCP_TEAM_TOKEN}"
+    }
+    handle @authorized {
+        reverse_proxy mcp:8000 {
+            header_up Host 127.0.0.1:8000
+            header_up -Authorization
+        }
+    }
+    @mcp path /mcp /mcp/*
+    handle @mcp {
+        header WWW-Authenticate "Bearer"
+        respond "Unauthorized" 401
+    }
+    handle {
+        respond "Not found" 404
+    }
+}

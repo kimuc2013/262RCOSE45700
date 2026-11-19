@@ -1,5 +1,6 @@
 import argparse
 import logging
+import atexit
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -12,6 +13,10 @@ from mcp.server.fastmcp.exceptions import ToolError
 
 def create_server(host='127.0.0.1', port=8000):
     service = build_service()
+    # FastMCP stateless HTTP enters the protocol lifespan per request, so a
+    # pooled retriever must stay alive until this serving process exits.
+    atexit.register(service.close)
+
     mcp = FastMCP("KU Academic Evidence", host=host, port=port,
                   stateless_http=True, json_response=True)
     read_only = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False)
@@ -28,7 +33,7 @@ def create_server(host='127.0.0.1', port=8000):
     async def search_academic_info(query: str, history: list[dict[str, str]] | None = None,
                              top_k: int = 5, semester: str | None = None, target: str | None = None) -> dict[str, Any]:
         """공개 학부 학사자료의 근거 후보와 URL을 반환합니다. status와 최신성 경고를 확인하세요.
-        history는 이전 user/assistant 메시지입니다. 로컬 모드는 BM25 기준선입니다. evidence_available이면 원문으로 답할 수 있는 부분을 답하고 없는 사실은 추정하지 마세요.
+        history는 이전 user/assistant 메시지입니다. 검색 모드는 응답의 retrieval_mode에 표시됩니다. evidence_available이면 원문으로 답할 수 있는 부분을 답하고 없는 사실은 추정하지 마세요.
         후속 질문은 클라이언트가 대화의 대상을 포함한 독립 질문으로 작성해 호출하세요.
         """
         try:
