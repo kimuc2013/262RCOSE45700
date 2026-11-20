@@ -20,6 +20,9 @@ def create_server(host='127.0.0.1', port=8000):
 
     mcp = FastMCP("KU Academic Evidence", host=host, port=port,
                   stateless_http=True, json_response=True)
+    if service.telemetry is not None:
+        from .live_metrics import register_routes
+        register_routes(mcp, service.telemetry.path)
     read_only = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False)
 
     async def measured(tool, ctx, call):
