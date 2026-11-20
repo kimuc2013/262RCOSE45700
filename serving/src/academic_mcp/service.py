@@ -293,7 +293,7 @@ class AcademicService:
                     answerability='client_must_check_source',
                     message='target_semester는 일정의 대상 학기이며 semester는 일정표 학기입니다. 날짜를 현재 학기로 바꾸지 마세요.')
                 result['answer_context'] = {'policy': CONTEXT_POLICY, 'guidance': result['message'],
-                    'sources': [{'url': e['url'], 'title': e['name'], 'section': '공식 학사일정',
+                    'sources': [{'url': e.get('url') or e['source'], 'title': e['name'], 'section': '공식 학사일정',
                         'text': json.dumps({k:e.get(k) for k in ('name','start','end','semester','target_semester')}, ensure_ascii=False),
                         'collected_at':e['collected_at']} for e in rows]}
                 result['freshness_warning'] = any((self.today()-date.fromisoformat(e['collected_at'])).days>7 for e in rows)

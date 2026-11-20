@@ -1,6 +1,7 @@
 import argparse
 import logging
 import atexit
+import os
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -41,6 +42,27 @@ def create_server(host='127.0.0.1', port=8000):
             return await service.asearch(query, history, top_k, semester, target)
         except ServingError as exc:
             raise ToolError(f'{exc.code}: {exc}') from exc
+
+    # Optional credentials stay in deployment environment, never in source.
+    if os.getenv('ANSWER_BASE_URL') and os.getenv('ANSWER_MODEL'):
+        from .answer import FinalAnswers
+        final_answers = FinalAnswers(service, base_url=os.environ['ANSWER_BASE_URL'],
+            model=os.environ['ANSWER_MODEL'], api_key=os.getenv('ANSWER_API_KEY',''),
+            budget=float(os.getenv('ANSWER_BUDGET_SECONDS','1.85')),
+            max_tokens=int(os.getenv('ANSWER_MAX_TOKENS','512')),
+            reasoning_effort=os.getenv('ANSWER_REASONING_EFFORT') or None)
+        atexit.register(final_answers.close)
+
+        @mcp.tool(annotations=read_only, structured_output=True)
+        async def answer_academic_question(query: str, history: list[dict[str,str]] | None = None,
+                top_k: int = 5, semester: str | None = None, target: str | None = None) -> dict[str,Any]:
+            """근거 검색과 최종 문장 생성을 함께 수행합니다. display_verbatim=true면 answer와 citations를 그대로 표시하세요.
+            answer_timeout은 답변 생성 실패이며 근거 부족이나 정답이 아닙니다. 이 도구 이후 클라이언트가 다시 생성하는 시간은 서버가 제어할 수 없습니다.
+            """
+            try:
+                return await final_answers.answer(query,history,top_k,semester,target)
+            except ServingError as exc:
+                raise ToolError(f'{exc.code}: {exc}') from exc
 
     @mcp.prompt()
     def grounded_answer() -> str:
