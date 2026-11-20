@@ -15,6 +15,8 @@ from zoneinfo import ZoneInfo
 from .search import bm25, cosine, fuse, normalize
 from .store import Store
 from .cache import identity
+from .context import build_context, POLICY as CONTEXT_POLICY
+from .calendar_route import calendar_request, matching_events
 from .runtime import (Limits, RequestController, ServingError, DeadlineExceeded,
                       DataChanged, Overloaded, Budget, current_budget, checkpoint)
 
@@ -28,6 +30,7 @@ evidence_available이면 원문을 읽고 질문에 직접 답하는 부분을 �
 needs_clarification이면 대화에서 대상을 확인해 독립된 질문으로 다시 호출하고, 모호하면 사용자에게 물어보세요.
 insufficient_evidence이면 확인할 수 없다고 안내하고, 반환된 후보를 확정 근거로 사용하지 마세요.
 login_required이면 학교 포털에서 직접 확인하도록 안내하세요. freshness_warning이면 수집일과 학기를 밝히세요.
+answer_context가 있으면 문서별로 묶인 sources와 guidance를 답변용으로 사용하세요. evidence는 검색 순위 확인용 원문입니다.
 최종 답변 문장은 클라이언트가 작성합니다. 검색 점수는 정답 확률이 아닙니다."""
 
 
@@ -37,11 +40,12 @@ def today_seoul():
 
 class AcademicService:
     def __init__(self, store: Store, models=None, *, clock=time.time, today=today_seoul,
-                 cache_ttl=300, rerank_min_score=None, limits=None, calendar_limits=None, retriever=None):
+                 cache_ttl=300, rerank_min_score=None, limits=None, calendar_limits=None, retriever=None, answer_context=False):
         if models is not None and retriever is not None:
             raise ValueError('Choose retriever or legacy models, not both')
         self.store, self.models, self.retriever = store, models, retriever
         self.clock, self.today, self.cache_ttl = clock, today, cache_ttl
+        self.answer_context = answer_context
         self.threshold = rerank_min_score
         self.model_revision = os.getenv('SERVING_MODEL_REVISION', 'unversioned')
         if not math.isfinite(cache_ttl) or cache_ttl <= 0:
@@ -61,7 +65,7 @@ class AcademicService:
     def profile(self):
         return {'mode': self.retrieval_mode(), 'threshold': self.threshold,
                 'retriever': self.retriever.profile() if self.retriever else None,
-                'model_revision': self.model_revision, 'retrieval_policy': 'evidence-v2',
+                'model_revision': self.model_revision, 'retrieval_policy': 'evidence-v2', 'context_policy': CONTEXT_POLICY if self.answer_context else 'disabled', 'calendar_route': 'explicit-semester-v1', 'history_policy': 'independent-retrieval-v1',
                 'instructions': hashlib.sha256(INSTRUCTIONS.encode()).hexdigest(),
                 'model': {key: getattr(self.models, key, None) for key in
                           ('base', 'embedding', 'rewriter', 'reranker', 'rerank_path')} if self.models else None}
@@ -74,7 +78,10 @@ class AcademicService:
             self.retriever.close()
 
     def cache_key(self, query, history, top_k, semester, target):
-        return identity(query, history, top_k, semester, target, self.profile(), self.today().isoformat())
+        # This module accepts independent questions and never consumes history.
+        # Rewritten legacy requests still require complete conversation isolation.
+        effective_history = [] if self.retriever else history
+        return identity(query, effective_history, top_k, semester, target, self.profile(), self.today().isoformat())
 
     async def read_revision(self, deadline):
         # SQLite can briefly lock while opening/closing WAL connections as well
@@ -243,8 +250,9 @@ class AcademicService:
         revision = self.store.revision()
         mode = self.retrieval_mode()
         # Cache BEFORE rewriting, with the complete original context in the key.
-        # Different conversations must not share an answer just because a model
-        # happens to rewrite both into the same underspecified sentence.
+        # Rewriting legacy modes keep complete conversations isolated. The
+        # independent-question Retriever never consumes history, so only that
+        # mode may share the exact request across different conversations.
         key = self.cache_key(query, history, top_k, semester, target)
         result = self.cached_result(key, revision)
         if result is not None:
@@ -273,6 +281,25 @@ class AcademicService:
             return self.response(revision, "login_required", message="개인 학사정보는 조회할 수 없습니다. KU포털에서 직접 확인하세요.", retrieval_mode=mode)
         if any(word in query for word in ('날씨', '주식추천', '맛집')):
             return self.response(revision, "out_of_scope", message="공개 학부 학사정보 검색 범위 밖의 질의입니다.", retrieval_mode=mode)
+        calendar_semester = calendar_request(query, semester)
+        if calendar_semester:
+            event_revision, events = self.store.table_snapshot('events')
+            if event_revision != revision:
+                raise DataChanged('Source changed before calendar routing; retry')
+            rows = matching_events(query, calendar_semester, events)
+            if rows:
+                result = self.response(revision, 'found', events=rows,
+                    retrieval_mode='structured_calendar', semester=calendar_semester,
+                    answerability='client_must_check_source',
+                    message='target_semester는 일정의 대상 학기이며 semester는 일정표 학기입니다. 날짜를 현재 학기로 바꾸지 마세요.')
+                result['answer_context'] = {'policy': CONTEXT_POLICY, 'guidance': result['message'],
+                    'sources': [{'url': e.get('url') or e['source'], 'title': e['name'], 'section': '공식 학사일정',
+                        'text': json.dumps({k:e.get(k) for k in ('name','start','end','semester','target_semester')}, ensure_ascii=False),
+                        'collected_at':e['collected_at']} for e in rows]}
+                result['freshness_warning'] = any((self.today()-date.fromisoformat(e['collected_at'])).days>7 for e in rows)
+                if self.store.revision() != revision:
+                    raise DataChanged('Source changed during calendar routing; retry')
+                return result
         checkpoint()
         snapshot_revision, chunks = self.store.table_snapshot('chunks')
         if snapshot_revision != revision:
@@ -280,7 +307,9 @@ class AcademicService:
         retrieval_metadata = {}
         if self.retriever:
             metrics['retrieval_calls'] = 1
+            retrieval_start = time.perf_counter()
             retrieved = self.retriever.search(query, top_k, chunks=chunks, revision=revision)
+            metrics['retrieval_ms'] = round((time.perf_counter()-retrieval_start)*1000,3)
             checkpoint()
             # The module owns ranking and threshold decisions. Never rejudge its
             # result using the serving legacy threshold or BM25 heuristics.
@@ -322,6 +351,12 @@ class AcademicService:
                                answerability='client_must_check_source', **retrieval_metadata,
                                message=("검색된 원문에서 질문에 직접 답하는 사실만 인용하세요. 없는 항목은 확인 불가로 구분하세요."
                                    if status != 'insufficient_evidence' else "답변에 사용할 검색 근거를 확보하지 못했습니다."))
+        # Original evidence, rank and module judgement remain inspectable.
+        # Context is a bounded presentation assembled from this exact revision.
+        if self.answer_context and status in ('found', 'evidence_available'):
+            context_start = time.perf_counter()
+            result['answer_context'] = build_context(query, selected, chunks)
+            metrics['context_ms'] = round((time.perf_counter()-context_start)*1000,3)
         result['freshness_warning'] = self.freshness(selected, semester)
         checkpoint()
         with self.store.connect() as db:
@@ -377,6 +412,7 @@ def build_service():
     return AcademicService(store,
                            RemoteModels() if mode == 'remote' else None,
                            retriever=Retriever.from_env(store) if mode == 'retrieval' else None,
+                           answer_context=os.getenv('SERVING_ANSWER_CONTEXT', 'false').lower() == 'true',
                            rerank_min_score=float(threshold) if threshold else None,
                            limits=limits, calendar_limits=Limits(max_running=2, max_queued=limits.max_queued,
                                max_waiters=limits.max_waiters, request_timeout=limits.request_timeout,
