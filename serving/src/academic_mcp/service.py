@@ -40,10 +40,15 @@ def today_seoul():
 
 class AcademicService:
     def __init__(self, store: Store, models=None, *, clock=time.time, today=today_seoul,
-                 cache_ttl=300, rerank_min_score=None, limits=None, calendar_limits=None, retriever=None, answer_context=False):
+                 cache_ttl=300, rerank_min_score=None, limits=None, calendar_limits=None, retriever=None, answer_context=False, telemetry=None):
         if models is not None and retriever is not None:
             raise ValueError('Choose retriever or legacy models, not both')
         self.store, self.models, self.retriever = store, models, retriever
+        self.telemetry = telemetry
+        if telemetry is not None and retriever is not None:
+            from .telemetry import ObservedClient
+            # Only observe the online HTTP boundary; leave model/index code intact.
+            retriever._client = ObservedClient(retriever._client, telemetry)
         self.clock, self.today, self.cache_ttl = clock, today, cache_ttl
         self.answer_context = answer_context
         self.threshold = rerank_min_score
@@ -76,6 +81,8 @@ class AcademicService:
     def close(self):
         if self.retriever:
             self.retriever.close()
+        if self.telemetry is not None:
+            self.telemetry.close()
 
     def cache_key(self, query, history, top_k, semester, target):
         # This module accepts independent questions and never consumes history.
@@ -409,10 +416,13 @@ def build_service():
                     queue_timeout=float(os.getenv('SERVING_QUEUE_TIMEOUT', '1')))
     store = Store(os.getenv('ACADEMIC_DB', 'data/academic.sqlite3'))
     from .retrieval import Retriever
+    from .telemetry import Telemetry
+    metrics_path = os.getenv('SERVING_METRICS_DB')
     return AcademicService(store,
                            RemoteModels() if mode == 'remote' else None,
                            retriever=Retriever.from_env(store) if mode == 'retrieval' else None,
                            answer_context=os.getenv('SERVING_ANSWER_CONTEXT', 'false').lower() == 'true',
+                           telemetry=Telemetry(metrics_path) if metrics_path else None,
                            rerank_min_score=float(threshold) if threshold else None,
                            limits=limits, calendar_limits=Limits(max_running=2, max_queued=limits.max_queued,
                                max_waiters=limits.max_waiters, request_timeout=limits.request_timeout,
