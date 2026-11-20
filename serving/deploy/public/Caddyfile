@@ -9,6 +9,30 @@
         max_size 128KB
     }
     header Cache-Control "no-store"
+    @ops_owner {
+        path /ops/api/metrics
+        header Authorization "Bearer {$MCP_OWNER_TOKEN}"
+    }
+    handle @ops_owner {
+        reverse_proxy mcp:8000 {
+            header_up Host 127.0.0.1:8000
+            header_up X-KU-Metrics-Access owner
+            header_up -Authorization
+        }
+    }
+    @ops_api path /ops/api/*
+    handle @ops_api {
+        header WWW-Authenticate "Bearer"
+        respond "Unauthorized" 401
+    }
+    @ops_page path /ops /ops/
+    handle @ops_page {
+        reverse_proxy mcp:8000 {
+            header_up Host 127.0.0.1:8000
+            header_up -X-KU-Metrics-Access
+            header_up -Authorization
+        }
+    }
     @authorized {
         path /mcp /mcp/*
         header Authorization "Bearer {$MCP_OWNER_TOKEN}"
@@ -18,6 +42,7 @@
         reverse_proxy mcp:8000 {
             header_up Host 127.0.0.1:8000
             header_up -Authorization
+            header_up -X-KU-Metrics-Access
         }
     }
     @mcp path /mcp /mcp/*

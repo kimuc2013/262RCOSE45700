@@ -63,7 +63,31 @@ def aggregate(events):
         'tools': tools, 'api_stages': stages}
 
 
-def read_report(path, hours=24, now=None):
+def time_series(events, start, end, buckets=60):
+    step = (end-start)/buckets
+    bins = [[] for _ in range(buckets)]
+    for event in events:
+        i = min(buckets-1, max(0, int((event['ts']-start)/step)))
+        bins[i].append(event)
+    points = []
+    for i, rows in enumerate(bins):
+        req = [r for r in rows if r['kind'] == 'request']
+        cacheable = [r for r in req if r['tool'] in ('search_academic_info', 'answer_academic_question')]
+        api = [r for r in rows if r['kind'] == 'api']
+        gen = [r for r in api if r['stage'] == 'generation']
+        tokens = [r['total_tokens'] for r in gen if type(r.get('total_tokens')) is int]
+        points.append({'ts': start+i*step, 'requests': len(req),
+            'failures': sum(r['status'] in ('error', 'cancelled', 'answer_timeout') for r in req),
+            'cache_rate': fraction(sum(r.get('cache_hit') is True for r in cacheable), len(cacheable))['percent'],
+            'shared_rate': fraction(sum(r.get('coalesced') is True for r in cacheable), len(cacheable))['percent'],
+            'p50_ms': latency(req)['p50_ms'], 'p95_ms': latency(req)['p95_ms'],
+            'api_calls': dict(Counter(r['stage'] for r in api)),
+            'generation_tokens': sum(tokens) if tokens else (0 if not gen else None),
+            'generation_usage_reported': len(tokens), 'generation_attempts': len(gen)})
+    return {'bucket_seconds': step, 'points': points}
+
+
+def read_report(path, hours=24, now=None, *, include_series=False):
     now = time.time() if now is None else now
     start = now-hours*3600
     uri = Path(path).resolve().as_uri()+'?mode=ro'
@@ -73,11 +97,16 @@ def read_report(path, hours=24, now=None):
         health = db.execute('SELECT sum(dropped),sum(write_errors) FROM telemetry_health').fetchone()
     events = [dict(json.loads(payload), kind=kind, traffic=traffic, ts=ts, trace_id=trace_id)
               for ts, kind, trace_id, traffic, payload in rows]
+    groups = {}
+    for group in ['live', 'experiment', 'all']:
+        selected = events if group == 'all' else [e for e in events if e['traffic'] == group]
+        groups[group] = aggregate(selected)
+        if include_series:
+            groups[group]['series'] = time_series(selected, start, now)
     return {'window': {'start': start, 'end': now, 'hours': hours,
             'first_observed_event': min((e['ts'] for e in events), default=None)},
         'health_retained_runs': {'dropped_events': health[0] or 0, 'write_errors': health[1] or 0},
-        'groups': {group: aggregate(events if group == 'all' else [e for e in events if e['traffic'] == group])
-                   for group in ['live', 'experiment', 'all']},
+        'groups': groups,
         'method': {'latency': 'server tool execution only; excludes client network/init/rewrite',
             'cache_rate_denominator': 'all calls of the tool, including errors/timeouts',
             'tokens': 'provider-reported observed usage only; missing is unknown, not zero',
