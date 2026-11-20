@@ -44,6 +44,7 @@ def test_physical_usage_once_for_shared_generation_and_cache(service, tmp_path):
         await until(lambda: service.requests._waiters == 8)
         release.set()
         results = await asyncio.gather(*tasks)
+        assert len({r['metrics']['observation_id'] for r in results}) == 8
         assert sum(r['metrics']['coalesced'] for r in results) == 7
         await telemetry.observe('answer_academic_question',
             lambda: final.answer('이중전공 제도를 설명해줘'), experiment=True)

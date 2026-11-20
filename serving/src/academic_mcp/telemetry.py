@@ -69,7 +69,8 @@ class Telemetry:
         values = {'tool': tool, 'status': 'error'}
         try:
             result = await call()
-            metrics = result.get('metrics', {})
+            metrics = result.setdefault('metrics', {})
+            metrics['observation_id'] = trace.get()[0]
             values.update(status=result.get('status', 'unknown'),
                 cache_hit=metrics.get('cache_hit', result.get('cache_hit')),
                 coalesced=metrics.get('coalesced', False),
