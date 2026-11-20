@@ -16,6 +16,7 @@ dev = ["pytest>=8,<10"]
 academic-mcp = "academic_mcp.server:main"
 academic-data = "academic_mcp.ingest:main"
 academic-answer = "academic_mcp.answer_cli:main"
+academic-metrics = "academic_mcp.metrics:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/academic_mcp"]

@@ -40,6 +40,9 @@ class FinalAnswers:
         self.service,self.model,self.budget,self.max_tokens=service,model,budget,max_tokens
         self.client=httpx.Client(base_url=base_url.rstrip('/')+'/',
             headers={'Authorization':'Bearer '+api_key} if api_key else {},transport=transport)
+        if service.telemetry is not None:
+            from .telemetry import ObservedClient
+            self.client=ObservedClient(self.client,service.telemetry,'generation')
         self.policy=hashlib.sha256(json.dumps([base_url,model,PROMPT,max_tokens,reasoning_effort,'strict-schema-v1',REPAIR,DIRECT_POLICY],ensure_ascii=False).encode()).hexdigest()
 
     def close(self):self.client.close()
@@ -76,9 +79,11 @@ class FinalAnswers:
             if time.monotonic()>=deadline:raise DeadlineExceeded('Answer deadline exhausted')
             hit['request_id']=uuid.uuid4().hex
             hit['metrics']={'cache_hit':cached,'coalesced':coalesced,
+                'retrieval_cache_hit':None if cached or coalesced else hit.pop('_retrieval_cache_hit',None),
                 'generation_calls':0 if cached or coalesced else hit.pop('_generation_calls',0),
                 'server_elapsed_ms':round((time.monotonic()-start)*1000,3)}
             hit.pop('_generation_calls',None)
+            hit.pop('_retrieval_cache_hit',None)
             return hit
         except (DeadlineExceeded,httpx.TimeoutException):
             # This is a failed completion, never counted as a fast factual answer.
@@ -139,6 +144,7 @@ class FinalAnswers:
                 'can_answer':can,'citations':list(dict.fromkeys(original[i-1]['url'] for i in ids)),
                 'revision':revision,'display_verbatim':True,'_generation_calls':attempt+1,
                 'freshness_warning':result.get('freshness_warning',False)}
+        output['_retrieval_cache_hit']=result.get('cache_hit')
         checkpoint()
         with self.service.store.connect(timeout=1) as db:
             db.execute('BEGIN IMMEDIATE')
