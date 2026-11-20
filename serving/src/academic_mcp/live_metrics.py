@@ -1,6 +1,5 @@
 """Owner-gated metrics routes. Public edge authenticates, private backend verifies its marker."""
 import asyncio
-import json
 from pathlib import Path
 import sqlite3
 import time

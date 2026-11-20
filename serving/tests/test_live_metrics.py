@@ -1,5 +1,4 @@
 import asyncio
-import json
 from pathlib import Path
 import threading
 import time
@@ -121,7 +120,6 @@ def test_loopback_bridge_hides_owner_key_and_rejects_bad_origin():
 
 def test_gateway_does_not_authorize_team_key_for_ops():
     config = (Path(__file__).parents[1]/'deploy/public/Caddyfile').read_text()
-    owner = config.split('@ops_owner {', 1)[1].split('}', 1)[0]  # env placeholders may close first
     ops_section = config.split('@ops_owner {', 1)[1].split('@ops_api path', 1)[0]
     assert 'MCP_OWNER_TOKEN' in ops_section and 'MCP_TEAM_TOKEN' not in ops_section
     assert 'header_up X-KU-Metrics-Access owner' in ops_section
