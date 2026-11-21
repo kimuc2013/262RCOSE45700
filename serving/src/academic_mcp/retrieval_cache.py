@@ -13,7 +13,7 @@ class RankedCache:
         self._guard = threading.Lock()
         self._flights = {}
 
-    def search(self, query, top_k, *, chunks, revision, metrics):
+    def search(self, query, top_k, *, chunks, revision, metrics, semester=None, target=None):
         service, retriever = self.service, self.service.retriever
         # Only the model module's known prefix invariant is eligible. Test or
         # alternate adapters without candidates retain their original contract.
@@ -32,8 +32,10 @@ class RankedCache:
                                  (key, revision, service.clock())).fetchone()
             return json.loads(row[0]) if row else None
 
-        def output(result, hit, shared=False):
-            metrics.update(retrieval_cache_hit=hit, retrieval_coalesced=shared)
+        def output(result, hit, shared=False, semantic=False):
+            metrics.update(retrieval_cache_hit=hit, retrieval_coalesced=shared, semantic_cache_hit=semantic)
+            if semantic:
+                metrics['semantic_similarity'] = result['semantic_cache']['similarity']
             result = copy.deepcopy(result)
             result['evidence'] = result['evidence'][:top_k]
             return result
@@ -54,7 +56,11 @@ class RankedCache:
             hit = read()
             if hit is not None:
                 return output(hit, True, shared)
-            result = retriever.search(query, width, chunks=chunks, revision=revision)
+            prepared = service.semantic_cache.prepare(query, width, revision, semester, target)
+            result = service.semantic_cache.lookup(prepared)
+            semantic = result is not None
+            if not semantic:
+                result = service.semantic_cache.search(query, width, chunks=chunks, revision=revision, prepared=prepared)
             checkpoint()
             # Retriever has already validated responses and applied its threshold.
             with service.store.connect() as db:
@@ -67,8 +73,10 @@ class RankedCache:
                     db.execute('DELETE FROM cache WHERE key IN (SELECT key FROM cache ORDER BY expires LIMIT 100)')
                 checkpoint()
                 db.execute('INSERT OR REPLACE INTO cache VALUES(?,?,?,?)',
-                    (key, revision, service.clock()+self.ttl, json.dumps(result, ensure_ascii=False)))
-            return output(result, False)
+                    (key, revision, min(service.clock()+self.ttl, result.get('semantic_cache',{}).get('expires_at',float('inf'))), json.dumps(result, ensure_ascii=False)))
+            if not semantic:
+                service.semantic_cache.publish(prepared, key, result, revision)
+            return output(result, semantic, semantic=semantic)
         finally:
             if acquired:
                 lock.release()

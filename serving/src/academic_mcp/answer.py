@@ -80,10 +80,12 @@ class FinalAnswers:
             hit['request_id']=uuid.uuid4().hex
             hit['metrics']={'cache_hit':cached,'coalesced':coalesced,
                 'retrieval_cache_hit':None if cached or coalesced else hit.pop('_retrieval_cache_hit',None),
+                'semantic_cache_hit':False if cached or coalesced else hit.pop('_semantic_cache_hit',False),
                 'generation_calls':0 if cached or coalesced else hit.pop('_generation_calls',0),
                 'server_elapsed_ms':round((time.monotonic()-start)*1000,3)}
             hit.pop('_generation_calls',None)
             hit.pop('_retrieval_cache_hit',None)
+            hit.pop('_semantic_cache_hit',None)
             return hit
         except (DeadlineExceeded,httpx.TimeoutException):
             # This is a failed completion, never counted as a fast factual answer.
@@ -144,6 +146,7 @@ class FinalAnswers:
                 'can_answer':can,'citations':list(dict.fromkeys(original[i-1]['url'] for i in ids)),
                 'revision':revision,'display_verbatim':True,'_generation_calls':attempt+1,
                 'freshness_warning':result.get('freshness_warning',False)}
+        output['_semantic_cache_hit']=result.get('metrics',{}).get('semantic_cache_hit',False)
         output['_retrieval_cache_hit']=bool(result.get('cache_hit') or
             result.get('metrics',{}).get('retrieval_cache_hit'))
         checkpoint()
