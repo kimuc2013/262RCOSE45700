@@ -43,6 +43,7 @@ def aggregate(events):
             'effective_cache_hit_rate': fraction(sum(r.get('cache_hit') is True or
                 r.get('retrieval_cache_hit') is True for r in rows), len(rows)),
             'retrieval_coalesced': sum(r.get('retrieval_coalesced') is True for r in rows),
+            'semantic_cache_hit_rate': fraction(sum(r.get('semantic_cache_hit') is True for r in rows), len(rows)),
             'retrieval_cache_observed': dict(Counter(str(r['retrieval_cache_hit']).lower()
                 for r in rows if isinstance(r.get('retrieval_cache_hit'), bool))),
             'all_latency': latency(rows), 'answered_latency': latency(answered),
@@ -86,6 +87,7 @@ def time_series(events, start, end, buckets=60):
             'effective_cache_rate': fraction(sum(r.get('cache_hit') is True or
                 r.get('retrieval_cache_hit') is True for r in cacheable), len(cacheable))['percent'],
             'shared_rate': fraction(sum(r.get('coalesced') is True for r in cacheable), len(cacheable))['percent'],
+            'semantic_cache_rate': fraction(sum(r.get('semantic_cache_hit') is True for r in cacheable), len(cacheable))['percent'],
             'p50_ms': latency(req)['p50_ms'], 'p95_ms': latency(req)['p95_ms'],
             'api_calls': dict(Counter(r['stage'] for r in api)),
             'generation_tokens': sum(tokens) if tokens else (0 if not gen else None),

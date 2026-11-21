@@ -40,6 +40,8 @@ services:
       SERVING_METRICS_DB: /data/telemetry.sqlite3
       SERVING_MODEL_REVISION: ${SERVING_MODEL_REVISION:-unversioned}
       SERVING_RANKED_CACHE_TTL: ${SERVING_RANKED_CACHE_TTL:-1800}
+      SERVING_SEMANTIC_CACHE: ${SERVING_SEMANTIC_CACHE:-true}
+      SERVING_SEMANTIC_THRESHOLD: ${SERVING_SEMANTIC_THRESHOLD:-0.94}
     volumes:
       - academic-data:/data
       - ./sample:/samples:ro
