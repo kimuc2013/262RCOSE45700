@@ -39,6 +39,7 @@ services:
       SERVING_ANSWER_CONTEXT: ${SERVING_ANSWER_CONTEXT:-false}
       SERVING_METRICS_DB: /data/telemetry.sqlite3
       SERVING_MODEL_REVISION: ${SERVING_MODEL_REVISION:-unversioned}
+      SERVING_RANKED_CACHE_TTL: ${SERVING_RANKED_CACHE_TTL:-1800}
     volumes:
       - academic-data:/data
       - ./sample:/samples:ro

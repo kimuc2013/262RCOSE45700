@@ -48,6 +48,8 @@ def create_server(host='127.0.0.1', port=8000):
         history는 이전 user/assistant 메시지입니다. 검색 모드는 응답의 retrieval_mode에 표시됩니다. evidence_available이면 원문으로 답할 수 있는 부분을 답하고 없는 사실은 추정하지 마세요.
         answer_context가 있으면 문서별 sources와 guidance를 사용하고 문서 제목의 적용 대상을 보존하세요.
         후속 질문은 클라이언트가 대화의 대상을 포함한 독립 질문으로 작성해 호출하세요.
+        이미 독립된 질문은 사용자 원문 그대로 query에 전달하고 동의어로 바꾸거나 배경 설명을 덧붙이지 마세요.
+        검색 개수를 별도로 요청받지 않았다면 기본 top_k=5를 사용하세요.
         """
         try:
             return await measured('search_academic_info', ctx, lambda: service.asearch(query, history, top_k, semester, target))

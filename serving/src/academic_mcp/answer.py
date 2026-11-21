@@ -144,7 +144,8 @@ class FinalAnswers:
                 'can_answer':can,'citations':list(dict.fromkeys(original[i-1]['url'] for i in ids)),
                 'revision':revision,'display_verbatim':True,'_generation_calls':attempt+1,
                 'freshness_warning':result.get('freshness_warning',False)}
-        output['_retrieval_cache_hit']=result.get('cache_hit')
+        output['_retrieval_cache_hit']=bool(result.get('cache_hit') or
+            result.get('metrics',{}).get('retrieval_cache_hit'))
         checkpoint()
         with self.service.store.connect(timeout=1) as db:
             db.execute('BEGIN IMMEDIATE')

@@ -40,7 +40,7 @@ def today_seoul():
 
 class AcademicService:
     def __init__(self, store: Store, models=None, *, clock=time.time, today=today_seoul,
-                 cache_ttl=300, rerank_min_score=None, limits=None, calendar_limits=None, retriever=None, answer_context=False, telemetry=None):
+                 cache_ttl=300, rerank_min_score=None, limits=None, calendar_limits=None, retriever=None, answer_context=False, telemetry=None, ranked_cache_ttl=1800):
         if models is not None and retriever is not None:
             raise ValueError('Choose retriever or legacy models, not both')
         self.store, self.models, self.retriever = store, models, retriever
@@ -49,12 +49,19 @@ class AcademicService:
             from .telemetry import ObservedClient
             # Only observe the online HTTP boundary; leave model/index code intact.
             retriever._client = ObservedClient(retriever._client, telemetry)
+        if retriever is not None and hasattr(retriever, '_client'):
+            from .model_transport import ReliableModelClient
+            retriever._client = ReliableModelClient(retriever._client)
         self.clock, self.today, self.cache_ttl = clock, today, cache_ttl
         self.answer_context = answer_context
         self.threshold = rerank_min_score
         self.model_revision = os.getenv('SERVING_MODEL_REVISION', 'unversioned')
         if not math.isfinite(cache_ttl) or cache_ttl <= 0:
             raise ValueError('cache_ttl must be positive and finite')
+        if not math.isfinite(ranked_cache_ttl) or ranked_cache_ttl <= 0:
+            raise ValueError('ranked_cache_ttl must be positive and finite')
+        from .retrieval_cache import RankedCache
+        self.ranked_cache = RankedCache(self, ranked_cache_ttl)
         if rerank_min_score is not None and not math.isfinite(rerank_min_score):
             raise ValueError('rerank_min_score must be finite')
         self.requests = RequestController(limits or Limits())
@@ -70,7 +77,7 @@ class AcademicService:
     def profile(self):
         return {'mode': self.retrieval_mode(), 'threshold': self.threshold,
                 'retriever': self.retriever.profile() if self.retriever else None,
-                'model_revision': self.model_revision, 'retrieval_policy': 'evidence-v2', 'context_policy': CONTEXT_POLICY if self.answer_context else 'disabled', 'calendar_route': 'explicit-semester-v1', 'history_policy': 'independent-retrieval-v1',
+                'model_revision': self.model_revision, 'retrieval_policy': 'ranked-cache-v1', 'context_policy': CONTEXT_POLICY if self.answer_context else 'disabled', 'calendar_route': 'explicit-semester-v1', 'history_policy': 'independent-retrieval-v1',
                 'instructions': hashlib.sha256(INSTRUCTIONS.encode()).hexdigest(),
                 'model': {key: getattr(self.models, key, None) for key in
                           ('base', 'embedding', 'rewriter', 'reranker', 'rerank_path')} if self.models else None}
@@ -160,6 +167,10 @@ class AcademicService:
             if time.monotonic() >= start + controller.limits.request_timeout:
                 raise DeadlineExceeded('Request time budget exhausted')
             calls = result.get('metrics', {}).get('model_calls', 0)
+            worker_metrics = result.get('metrics', {})
+            for field in ('retrieval_cache_hit', 'retrieval_coalesced'):
+                if field in worker_metrics:
+                    metrics[field] = worker_metrics[field]
             metrics.update(status=result['status'], coalesced=coalesced, queue_ms=queue_ms,
                            model_calls=0 if coalesced else calls, shared_model_calls=calls,
                            cache_hit=result['cache_hit'])
@@ -315,7 +326,15 @@ class AcademicService:
         if self.retriever:
             metrics['retrieval_calls'] = 1
             retrieval_start = time.perf_counter()
-            retrieved = self.retriever.search(query, top_k, chunks=chunks, revision=revision)
+            from .model_transport import ReliableModelClient, physical_attempts
+            counted = isinstance(getattr(self.retriever, '_client', None), ReliableModelClient)
+            before = physical_attempts.get()
+            try:
+                retrieved = self.ranked_cache.search(query, top_k, chunks=chunks, revision=revision, metrics=metrics)
+            finally:
+                if counted:
+                    metrics['model_calls'] += physical_attempts.get()-before
+            metrics['retrieval_calls'] = int(not metrics['retrieval_cache_hit'])
             metrics['retrieval_ms'] = round((time.perf_counter()-retrieval_start)*1000,3)
             checkpoint()
             # The module owns ranking and threshold decisions. Never rejudge its
@@ -325,7 +344,7 @@ class AcademicService:
                 raise ValueError('Unexpected retriever status')
             selected = [{**row, 'content_kind': 'untrusted_source_excerpt'} for row in retrieved['evidence']]
             retrieval_metadata = {key: retrieved[key] for key in ('score_type', 'min_rerank_score')}
-            if chunks:
+            if chunks and not metrics['retrieval_cache_hit'] and not counted:
                 metrics['model_calls'] += 1 + int(self.retriever.use_reranker)
         else:
             ranked = bm25(query, chunks)
@@ -423,6 +442,7 @@ def build_service():
                            retriever=Retriever.from_env(store) if mode == 'retrieval' else None,
                            answer_context=os.getenv('SERVING_ANSWER_CONTEXT', 'false').lower() == 'true',
                            telemetry=Telemetry(metrics_path) if metrics_path else None,
+                           ranked_cache_ttl=float(os.getenv('SERVING_RANKED_CACHE_TTL', '1800')),
                            rerank_min_score=float(threshold) if threshold else None,
                            limits=limits, calendar_limits=Limits(max_running=2, max_queued=limits.max_queued,
                                max_waiters=limits.max_waiters, request_timeout=limits.request_timeout,
