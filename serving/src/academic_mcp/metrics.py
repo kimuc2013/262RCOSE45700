@@ -40,6 +40,9 @@ def aggregate(events):
         tools[tool] = {'requests': len(rows), 'statuses': dict(Counter(r['status'] for r in rows)),
             'cache_hit_rate': fraction(hits, len(rows)), 'coalesced': shared,
             'cache_or_shared_rate': fraction(reused, len(rows)),
+            'effective_cache_hit_rate': fraction(sum(r.get('cache_hit') is True or
+                r.get('retrieval_cache_hit') is True for r in rows), len(rows)),
+            'retrieval_coalesced': sum(r.get('retrieval_coalesced') is True for r in rows),
             'retrieval_cache_observed': dict(Counter(str(r['retrieval_cache_hit']).lower()
                 for r in rows if isinstance(r.get('retrieval_cache_hit'), bool))),
             'all_latency': latency(rows), 'answered_latency': latency(answered),
@@ -54,6 +57,7 @@ def aggregate(events):
         stages[stage] = {'attempts': len(rows), 'latency': latency(rows),
             'http_errors': sum((r.get('status_code') or 0) >= 400 for r in rows),
             'transport_errors': sum(bool(r.get('error_type')) for r in rows),
+            'error_types': dict(Counter(r['error_type'] for r in rows if r.get('error_type'))),
             'models': dict(Counter(r.get('model', 'unknown') for r in rows))}
         for field in ['prompt_tokens', 'completion_tokens', 'total_tokens', 'cached_prompt_tokens']:
             reported = [r[field] for r in rows if type(r.get(field)) is int]
@@ -79,6 +83,8 @@ def time_series(events, start, end, buckets=60):
         points.append({'ts': start+i*step, 'requests': len(req),
             'failures': sum(r['status'] in ('error', 'cancelled', 'answer_timeout') for r in req),
             'cache_rate': fraction(sum(r.get('cache_hit') is True for r in cacheable), len(cacheable))['percent'],
+            'effective_cache_rate': fraction(sum(r.get('cache_hit') is True or
+                r.get('retrieval_cache_hit') is True for r in cacheable), len(cacheable))['percent'],
             'shared_rate': fraction(sum(r.get('coalesced') is True for r in cacheable), len(cacheable))['percent'],
             'p50_ms': latency(req)['p50_ms'], 'p95_ms': latency(req)['p95_ms'],
             'api_calls': dict(Counter(r['stage'] for r in api)),
