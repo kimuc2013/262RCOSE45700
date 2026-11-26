@@ -1,6 +1,6 @@
 import * as React from "react"
 import { createRoot, type Root } from "react-dom/client"
-import { Area, AreaChart, Bar, BarChart, CartesianGrid, Line, LineChart, XAxis } from "recharts"
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, Line, LineChart, XAxis, YAxis } from "recharts"
 import { ChartContainer, ChartLegend, ChartTooltip, ChartTooltipContent, type ChartConfig } from "./components/ui/chart"
 
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "./components/ui/card"
@@ -46,6 +46,7 @@ function MetricChart({spec,points,hours}:{spec:Spec;points:Point[];hours:string}
       {!points.length?<div className="chart-empty">아직 관측된 데이터가 없습니다</div>:<ChartContainer id={`ops-${spec.id}`} config={config} className="aspect-auto h-[250px] w-full" aria-label={spec.title}>
         <Chart accessibilityLayer data={data} margin={{left:12,right:12,top:4,bottom:0}}>
           <CartesianGrid vertical={false}/>
+          <YAxis hide domain={spec.percent?[0,100]:[0,"auto"]}/>
           <XAxis dataKey="ts" type="number" domain={["dataMin","dataMax"]} tickLine={false} axisLine={false} tickMargin={8} minTickGap={32} tickFormatter={v=>stamp(Number(v),long)}/>
           <ChartTooltip cursor={false} content={<ChartTooltipContent labelFormatter={(_label,payload)=>stamp(Number(payload?.[0]?.payload?.ts),true)} indicator="dot" formatter={(value,name)=>{const item=config[String(name)];return <><div className="h-2.5 w-2.5 shrink-0 rounded-[2px]" style={{background:item?.color}}/><span className="text-muted-foreground">{item?.label??String(name)}</span><span className="ml-auto font-mono font-medium tabular-nums">{number(Number(value),spec.unit)} {spec.unit}</span></>}}/>}/>
           <ChartLegend content={()=><div className="flex flex-wrap items-center justify-center gap-4 pt-3" aria-label={`${spec.title} 범례`}>{spec.series.map(s=><button type="button" key={s.key} className="chart-legend-item" aria-pressed={!hidden.includes(s.key)} onClick={()=>setHidden(h=>h.includes(s.key)?h.filter(k=>k!==s.key):h.length<spec.series.length-1?[...h,s.key]:h)}><div className="h-2 w-2 shrink-0 rounded-[2px]" style={{background:s.color}}/>{s.label}</button>)}</div>}/>

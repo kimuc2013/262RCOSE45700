@@ -20,6 +20,7 @@
   --radius-xl: calc(var(--radius) + 4px);
 }
 :root {--background:#111;--foreground:#fafafa;--card:#171717;--card-foreground:#fafafa;--popover:#171717;--popover-foreground:#fafafa;--border:#ffffff1a;--input:#ffffff26;--muted-foreground:#a1a1a1;--accent:#262626;--accent-foreground:#fafafa;--ring:#737373;--radius:.625rem;--chart-1:#8ec5ff;--chart-2:#2b7fff;--chart-3:#155dfb;--chart-4:#1447e6;--chart-5:#193cb8}
+:root {background:var(--background);color:var(--foreground)}
 .charts {gap:24px;font-size:14px}
 .charts>[data-slot=card] {min-width:0;border-style:solid;border-width:1px;border-color:var(--border)}
 .charts>[data-featured=true] {grid-column:1/-1}
