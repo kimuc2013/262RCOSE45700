@@ -14,7 +14,10 @@ HEADERS = {'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
 
 def dashboard_html(local=False):
     text = Path(__file__).with_name('live_dashboard.html').read_text()
-    return text.replace('__LOCAL_MODE__', 'true' if local else 'false')
+    assets=Path(__file__).with_name('dashboard_assets')
+    return (text.replace('__LOCAL_MODE__', 'true' if local else 'false')
+            .replace('__CHART_STYLES__',(assets/'charts.css').read_text())
+            .replace('__CHART_SCRIPT__',(assets/'charts.js').read_text()))
 
 
 class MetricsReader:

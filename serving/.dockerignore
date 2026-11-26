@@ -4,3 +4,6 @@ data
 tests
 __pycache__
 .pytest_cache
+
+# Frontend assets are prebuilt and verified in CI.
+dashboard-ui
