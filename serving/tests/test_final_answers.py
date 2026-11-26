@@ -302,3 +302,86 @@ def test_long_named_field_match_never_chooses_unrelated_withdrawal():
     carry={**drop,'id':'carry','section':'유연 수강신청 학점제','text':'- 학년도 내 최대 3학점 선사용 또는 이월'}
     q='안 쓴 수강신청 학점을 다음 학기로 넘길 수 있어?'
     assert direct_answer(q,[drop,carry])['chunk_ids']==['carry']
+
+
+def test_stage_timings_measure_generation_and_do_not_replay_cache(service):
+    def handler(req):
+        time.sleep(.025)
+        return httpx.Response(200,json={'model':MODEL,'choices':[{'finish_reason':'stop','message':{
+            'content':json.dumps({'answer':'등록 3학기 이상입니다.','can_answer':True,'sources':[1]})}}]})
+    answer=generator(service,handler)
+    async def run():
+        first=await answer.answer('이중전공 제도를 설명해줘')
+        m=first['metrics'];t=m['stage_elapsed_ms']
+        assert m['answer_model']==MODEL and m['stage_timings_complete']
+        assert 20<=t['generation']<=t['work_wait']<=m['server_elapsed_ms']
+        assert t['retrieval']>0 and t['cache_write']>0
+        second=await answer.answer('이중전공 제도를 설명해줘')
+        assert second['metrics']['cache_hit']
+        assert second['metrics']['stage_elapsed_ms']['generation']==0
+        assert second['metrics']['stage_elapsed_ms']['retrieval']==0
+    try:asyncio.run(run())
+    finally:answer.close()
+
+
+def test_timeout_timings_include_unfinished_http_without_waiting_for_worker(service):
+    started,release=threading.Event(),threading.Event()
+    def handler(req):
+        started.set();release.wait(1)
+        return httpx.Response(200,json={})
+    answer=generator(service,handler,budget=.08)
+    async def run():
+        task=asyncio.create_task(answer.answer('이중전공 제도를 설명해줘'))
+        await until(started.is_set)
+        result=await task
+        assert result['status']=='answer_timeout'
+        metrics=result['metrics'];timings=metrics['stage_elapsed_ms']
+        assert not metrics['stage_timings_complete']
+        assert 30<timings['generation']<250
+        assert metrics['generation_calls']==1
+        frozen=dict(timings)
+        release.set();await until(lambda:service.requests._admitted==0)
+        assert timings==frozen
+    try:asyncio.run(run())
+    finally:release.set();answer.close()
+
+
+def test_combined_named_fields_quote_both_but_never_infer_conditions():
+    from academic_mcp.direct_answer import direct_answer
+    base={'doc_id':'major','doc_title':'교육정보 > 이중전공','url':'https://official.test/major'}
+    definition={**base,'id':'definition','section':'정의','text':'제2전공을 동시에 이수하여 두 학위를 받는다.'}
+    criteria={**base,'id':'criteria','section':'신청절차','text':'- 평가기준\n  - 성적, 면접 등 대학별 기준\n- 접수방법\n  - 포털 신청'}
+    rows=[definition,criteria]
+    q='이중전공 제도의 개념과 지원자를 평가하는 요소를 설명해줘'
+    result=direct_answer(q,rows)
+    assert result['chunk_ids']==['definition','criteria']
+    assert all(r['text'] in result['answer'] for r in rows)
+    assert direct_answer(q,[definition]) is None
+    assert direct_answer(q,[definition,{**criteria,'doc_id':'different'}]) is None
+    assert direct_answer(q,rows+[dict(criteria,id='conflict')]) is None
+    for query in ['2027년 '+q,'신입생 '+q,'이중전공 제도의 개념과 합격 커트라인을 설명해줘',q+' 그리고 예외는?']:
+        assert direct_answer(query,rows) is None
+
+
+def test_exact_public_field_route_skips_models_and_checks_revision(service,monkeypatch):
+    def forbidden(*args,**kwargs):raise AssertionError('Exact field must not invoke search or generation')
+    answer=generator(service,forbidden)
+    monkeypatch.setattr(service,'search',forbidden)
+    async def run():
+        result=await answer.answer('이중전공 신청자격 알려줘')
+        assert result['status']=='answered' and result['answer_mode']=='source_item'
+        assert result['metrics']['model_calls']==0 and result['citations']
+        assert '3학기' in result['answer']
+    try:asyncio.run(run())
+    finally:answer.close()
+
+
+def test_exact_field_route_preserves_old_source_warning(service):
+    from datetime import date
+    service.today=lambda:date(2030,1,1)
+    answer=generator(service)
+    async def run():
+        result=await answer.answer('이중전공 신청자격 알려줘')
+        assert result['freshness_warning'] and result['metrics']['model_calls']==0
+    try:asyncio.run(run())
+    finally:answer.close()

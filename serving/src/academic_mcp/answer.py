@@ -8,8 +8,9 @@ import time
 import uuid
 
 import httpx
-from .call_metrics import attempts, since, record_attempt, response_metrics, CallProgress, progress
+from .call_metrics import attempts, since, record_attempt, response_metrics, CallProgress, progress, timed_stage
 from .direct_answer import direct_answer, POLICY as DIRECT_POLICY
+from .literal_route import lookup as literal_lookup, POLICY as LITERAL_POLICY
 
 from .runtime import (DeadlineExceeded, DataChanged, checkpoint, remaining_timeout)
 
@@ -40,11 +41,12 @@ class FinalAnswers:
         self.reasoning_effort=reasoning_effort
         self.service,self.model,self.budget,self.max_tokens=service,model,budget,max_tokens
         self.client=httpx.Client(base_url=base_url.rstrip('/')+'/',
-            headers={'Authorization':'Bearer '+api_key} if api_key else {},transport=transport)
+            headers={'Authorization':'Bearer '+api_key} if api_key else {},transport=transport,
+            limits=httpx.Limits(max_connections=8,max_keepalive_connections=8,keepalive_expiry=60))
         if service.telemetry is not None:
             from .telemetry import ObservedClient
             self.client=ObservedClient(self.client,service.telemetry,'generation')
-        self.policy=hashlib.sha256(json.dumps([base_url,model,PROMPT,max_tokens,reasoning_effort,'strict-schema-v1',REPAIR,DIRECT_POLICY],ensure_ascii=False).encode()).hexdigest()
+        self.policy=hashlib.sha256(json.dumps([base_url,model,PROMPT,max_tokens,reasoning_effort,'strict-schema-v2',REPAIR,DIRECT_POLICY,LITERAL_POLICY],ensure_ascii=False).encode()).hexdigest()
 
     def close(self):self.client.close()
 
@@ -69,16 +71,25 @@ class FinalAnswers:
         tracker=CallProgress()
         progress_token=progress.set(tracker)
         try:
-            revision=await self.service.read_revision(deadline)
-            hit,_,_=await self.service.cache_reads.execute('read:'+key+revision,
-                lambda:self.cached(key,revision),deadline=deadline)
+            tracker.phase('revision')
+            with timed_stage('revision'):
+                revision=await self.service.read_revision(deadline)
+            tracker.phase('cache_lookup')
+            with timed_stage('cache_lookup'):
+                hit,_,_=await self.service.cache_reads.execute('read:'+key+revision,
+                    lambda:self.cached(key,revision),deadline=deadline)
             coalesced=False
             if hit is None:
-                hit,coalesced,_=await self.service.requests.execute(key+revision,
-                    lambda:self.generate(key,revision,query,history,top_k,semester,target),deadline=deadline)
+                tracker.phase('admission')
+                with timed_stage('work_wait'):
+                    hit,coalesced,queue_ms=await self.service.requests.execute(key+revision,
+                        lambda:self.generate(key,revision,query,history,top_k,semester,target),deadline=deadline)
                 cached=False
             else:cached=True
-            if await self.service.read_revision(deadline)!=revision:
+            tracker.phase('revision')
+            with timed_stage('revision'):
+                current_revision=await self.service.read_revision(deadline)
+            if current_revision!=revision:
                 raise DataChanged('Source changed during answer; retry')
             if time.monotonic()>=deadline:raise DeadlineExceeded('Answer deadline exhausted')
             counts = hit.pop('_model_counts', {})
@@ -91,6 +102,8 @@ class FinalAnswers:
                 'semantic_cache_reason':'response_cache_hit' if cached else 'coalesced' if coalesced else cache_reason,
                 'embedding_cache_hit':None if cached or coalesced else embedding_hit,
                 'request_budget_ms':round(self.budget*1000,3),
+                'queue_ms':0 if cached else round(queue_ms,3),
+                'answer_model':self.model,
                 **response_metrics({} if cached else counts, round((time.monotonic()-start)*1000,3), shared=coalesced)}
             hit.pop('_generation_calls',None)
             hit.pop('_retrieval_cache_hit',None)
@@ -109,7 +122,7 @@ class FinalAnswers:
                 'display_verbatim':False,'request_id':uuid.uuid4().hex,
                 'timeout_stage':stage,'retrieval_complete':retrieved,
                 'metrics':{'cache_hit':False,'coalesced':shared,'retrieval_cache_hit':None,
-                    'semantic_cache_hit':False, 'timeout_stage':stage,
+                    'semantic_cache_hit':False, 'timeout_stage':stage, 'answer_model':self.model,
                     'request_budget_ms':round(self.budget*1000,3), **timeout_metrics}}
 
         finally:
@@ -122,57 +135,69 @@ class FinalAnswers:
         if cached is not None:return cached
         tracker=progress.get()
         if tracker is not None:tracker.phase('retrieval')
-        result=self.service.search(query,history,top_k,semester,target)
+        with timed_stage('retrieval'):
+            snapshot_revision,chunks=self.service.store.table_snapshot('chunks')
+            if snapshot_revision!=revision:raise DataChanged('Source changed before field lookup')
+            direct=literal_lookup(query,chunks,semester,target)
+            if direct is not None:
+                result=self.service.response(revision,'found',
+                    evidence=[c for c in chunks if c['id'] in direct['chunk_ids']],
+                    retrieval_mode='exact_public_fields',metrics={})
+            else:
+                result=self.service.search(query,history,top_k,semester,target)
         if tracker is not None:tracker.phase('answer_routing')
         if result['revision']!=revision:raise DataChanged('Source changed before generation')
-        status=result['status']
-        direct=direct_answer(query,result.get('evidence',[])) if status in ('found','evidence_available') else None
-        if status in ('login_required','out_of_scope','needs_clarification','insufficient_evidence'):
-            output={'status':status,'answer':result['message'],'can_answer':False,'citations':[],
-                    'revision':revision,'display_verbatim':True,'_generation_calls':0}
-        elif direct is not None:
-            output={**direct,'status':'answered','revision':revision,'display_verbatim':True,
-                '_generation_calls':0,'freshness_warning':result.get('freshness_warning',False)}
-        elif result.get('retrieval_mode')=='structured_calendar':
-            events=result['events']
-            lines=list(dict.fromkeys(f"{e.get('target_semester',e['semester'])} {e['name']}: {e['start']} ~ {e['end']}" for e in events))
-            output={'status':'answered','answer':'\n'.join(lines),'can_answer':True,
-                'citations':list(dict.fromkeys((e.get('url') or e['source']) for e in events)),
-                'revision':revision,'display_verbatim':True,'_generation_calls':0,
-                'answer_mode':'structured_calendar','freshness_warning':result.get('freshness_warning',False)}
-        else:
-            sources=[{'id':i+1,'title':r['doc_title'],'section':r['section'],'text':r['text'],
-                      'collected_at':r['collected_at']} for i,r in enumerate(result.get('evidence',[]))]
-            original=result.get('evidence',[])
-            checkpoint()
-            payload={'model':self.model,
-                'messages':[{'role':'system','content':PROMPT},{'role':'user','content':json.dumps({
-                    'question':query,'resolved_query':result.get('query',query),'semester':semester,'target':target,'as_of':self.service.today().isoformat(),'sources':sources},ensure_ascii=False)}],
-                'temperature':0,'max_tokens':self.max_tokens,'chat_template_kwargs':{'enable_thinking':False},
-                'stream':False,'response_format':{'type':'json_schema','json_schema':{
-                    'name':'academic_answer','strict':True,'schema':{'type':'object','properties':{
-                        'answer':{'type':'string'},'can_answer':{'type':'boolean'},
-                        'sources':{'type':'array','items':{'type':'integer','minimum':1,'maximum':len(original)}}},
-                        'required':['answer','can_answer','sources'],'additionalProperties':False}}}}
-            if self.reasoning_effort:payload['reasoning_effort']=self.reasoning_effort
-            for attempt in range(2):
-                record_attempt('generation')
-                response=self.client.post('chat/completions',json=payload,timeout=remaining_timeout(self.budget))
-                response.raise_for_status();checkpoint()
-                data=response.json()
-                if data.get('model')!=self.model:raise ValueError('Unexpected answer model')
-                try:
-                    text,can,ids=self.parse(data,len(original))
-                    break
-                except (ValueError,KeyError,TypeError,AttributeError):
-                    # One format repair only, using the original evidence and
-                    # the same caller deadline. Never interpret analysis as an answer.
-                    if attempt or remaining_timeout(self.budget)<0.4:raise
-                    payload['messages'][0]={'role':'system','content':PROMPT+'\n'+REPAIR}
-            output={'status':'answered' if can else 'insufficient_evidence','answer':text,
-                'can_answer':can,'citations':list(dict.fromkeys(original[i-1]['url'] for i in ids)),
-                'revision':revision,'display_verbatim':True,'_generation_calls':attempt+1,
-                'freshness_warning':result.get('freshness_warning',False)}
+        with timed_stage('answer_routing'):
+            status=result['status']
+            direct=direct or (direct_answer(query,result.get('evidence',[])) if status in ('found','evidence_available') else None)
+            if status in ('login_required','out_of_scope','needs_clarification','insufficient_evidence'):
+                output={'status':status,'answer':result['message'],'can_answer':False,'citations':[],
+                        'revision':revision,'display_verbatim':True,'_generation_calls':0}
+            elif direct is not None:
+                output={**direct,'status':'answered','revision':revision,'display_verbatim':True,
+                    '_generation_calls':0,'freshness_warning':result.get('freshness_warning',False)}
+            elif result.get('retrieval_mode')=='structured_calendar':
+                events=result['events']
+                lines=list(dict.fromkeys(f"{e.get('target_semester',e['semester'])} {e['name']}: {e['start']} ~ {e['end']}" for e in events))
+                output={'status':'answered','answer':'\n'.join(lines),'can_answer':True,
+                    'citations':list(dict.fromkeys((e.get('url') or e['source']) for e in events)),
+                    'revision':revision,'display_verbatim':True,'_generation_calls':0,
+                    'answer_mode':'structured_calendar','freshness_warning':result.get('freshness_warning',False)}
+            else:
+                sources=[{'id':i+1,'title':r['doc_title'],'section':r['section'],'text':r['text'],
+                          'collected_at':r['collected_at']} for i,r in enumerate(result.get('evidence',[]))]
+                original=result.get('evidence',[])
+                checkpoint()
+                payload={'model':self.model,
+                    'messages':[{'role':'system','content':PROMPT},{'role':'user','content':json.dumps({
+                        'question':query,'resolved_query':result.get('query',query),'semester':semester,'target':target,'as_of':self.service.today().isoformat(),'sources':sources},ensure_ascii=False)}],
+                    'temperature':0,'max_tokens':self.max_tokens,'chat_template_kwargs':{'enable_thinking':False},
+                    'stream':False,'response_format':{'type':'json_schema','json_schema':{
+                        'name':'academic_answer','strict':True,'schema':{'type':'object','properties':{
+                            'answer':{'type':'string'},'can_answer':{'type':'boolean'},
+                            'sources':{'type':'array','items':{'type':'integer','minimum':1,'maximum':len(original)}}},
+                            'required':['answer','can_answer','sources'],'additionalProperties':False}}}}
+                if self.reasoning_effort:payload['reasoning_effort']=self.reasoning_effort
+                for attempt in range(2):
+                    timeout=remaining_timeout(self.budget)
+                    record_attempt('generation')
+                    with timed_stage('generation'):
+                        response=self.client.post('chat/completions',json=payload,timeout=timeout)
+                    response.raise_for_status();checkpoint()
+                    data=response.json()
+                    if data.get('model')!=self.model:raise ValueError('Unexpected answer model')
+                    try:
+                        text,can,ids=self.parse(data,len(original))
+                        break
+                    except (ValueError,KeyError,TypeError,AttributeError):
+                        # One format repair only, using the original evidence and
+                        # the same caller deadline. Never interpret analysis as an answer.
+                        if attempt or remaining_timeout(self.budget)<0.4:raise
+                        payload['messages'][0]={'role':'system','content':PROMPT+'\n'+REPAIR}
+                output={'status':'answered' if can else 'insufficient_evidence','answer':text,
+                    'can_answer':can,'citations':list(dict.fromkeys(original[i-1]['url'] for i in ids)),
+                    'revision':revision,'display_verbatim':True,'_generation_calls':attempt+1,
+                    'freshness_warning':result.get('freshness_warning',False)}
         if tracker is not None:tracker.phase('cache_write')
         output['_model_counts'] = since(calls_before)
         output['_embedding_cache_hit']=result.get('metrics',{}).get('embedding_cache_hit')
@@ -181,16 +206,17 @@ class FinalAnswers:
         output['_retrieval_cache_hit']=bool(result.get('cache_hit') or
             result.get('metrics',{}).get('retrieval_cache_hit'))
         checkpoint()
-        with self.service.store.connect(timeout=1) as db:
-            db.execute('BEGIN IMMEDIATE')
-            current=db.execute("SELECT value FROM meta WHERE key='revision'").fetchone()
-            if (current[0] if current else 'empty')!=revision:raise DataChanged('Source changed during generation')
-            checkpoint()
-            db.execute('DELETE FROM cache WHERE expires<=?',(self.service.clock(),))
-            if db.execute('SELECT count(*) FROM cache').fetchone()[0]>=1000:
-                db.execute('DELETE FROM cache WHERE key IN (SELECT key FROM cache ORDER BY expires LIMIT 100)')
-            db.execute('INSERT OR REPLACE INTO cache VALUES(?,?,?,?)',
-                (key,revision,self.service.clock()+self.service.cache_ttl,json.dumps({k:v for k,v in output.items() if k != '_model_counts'},ensure_ascii=False)))
+        with timed_stage('cache_write'):
+            with self.service.store.connect(timeout=1) as db:
+                db.execute('BEGIN IMMEDIATE')
+                current=db.execute("SELECT value FROM meta WHERE key='revision'").fetchone()
+                if (current[0] if current else 'empty')!=revision:raise DataChanged('Source changed during generation')
+                checkpoint()
+                db.execute('DELETE FROM cache WHERE expires<=?',(self.service.clock(),))
+                if db.execute('SELECT count(*) FROM cache').fetchone()[0]>=1000:
+                    db.execute('DELETE FROM cache WHERE key IN (SELECT key FROM cache ORDER BY expires LIMIT 100)')
+                db.execute('INSERT OR REPLACE INTO cache VALUES(?,?,?,?)',
+                    (key,revision,self.service.clock()+self.service.cache_ttl,json.dumps({k:v for k,v in output.items() if k != '_model_counts'},ensure_ascii=False)))
         return output
 
     def parse(self,data,source_count):
