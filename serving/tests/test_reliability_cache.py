@@ -80,15 +80,16 @@ def test_http_error_is_not_retried():
     client.close()
 
 
-def test_ranked_cache_reuses_across_topk_scope_but_response_stays_isolated(retrieval_setup):
+def test_ranked_cache_isolates_scope_but_reuses_query_vector(retrieval_setup):
     store,fake,retriever=retrieval_setup
     retriever.build_index();fake.requests.clear()
     service=AcademicService(store,retriever=retriever)
     first=service.search('이중전공 자격',top_k=1,semester='2026-1',target='학부')
     second=service.search('이중전공 자격',top_k=3,semester='2026-2',target='편입생')
-    assert len(fake.requests)==2
+    assert len(fake.requests)==3
     assert not first['metrics']['retrieval_cache_hit']
-    assert second['metrics']['retrieval_cache_hit'] and second['metrics']['model_calls']==0
+    assert not second['metrics']['retrieval_cache_hit']
+    assert second['metrics']['embedding_cache_hit'] and second['metrics']['model_calls']==1
     assert not second['cache_hit']  # whole-response cache and evidence cache are distinct
     assert second['semester']=='2026-2' and second['target']=='편입생'
     assert first['evidence']==second['evidence'][:1]

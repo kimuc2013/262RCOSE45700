@@ -64,6 +64,8 @@ class AcademicService:
             raise ValueError('ranked_cache_ttl must be positive and finite')
         from .retrieval_cache import RankedCache
         self.ranked_cache = RankedCache(self, ranked_cache_ttl)
+        from .query_embeddings import QueryEmbeddings
+        self.query_embeddings = QueryEmbeddings(self)
         if not math.isfinite(semantic_threshold) or not .9 <= semantic_threshold <= 1:
             raise ValueError('semantic_threshold must be finite and between .9 and 1')
         self.semantic_cache_enabled = semantic_cache
@@ -85,7 +87,7 @@ class AcademicService:
     def profile(self):
         return {'mode': self.retrieval_mode(), 'threshold': self.threshold,
                 'retriever': self.retriever.profile() if self.retriever else None,
-                'model_revision': self.model_revision, 'retrieval_policy': 'ranked-cache-v1', 'semantic_cache': self.semantic_profile, 'context_policy': CONTEXT_POLICY if self.answer_context else 'disabled', 'calendar_route': 'explicit-semester-v1', 'history_policy': 'independent-retrieval-v1',
+                'model_revision': self.model_revision, 'retrieval_policy': 'ranked-cache-v2-polite', 'query_vectors': 'query-vectors-v1', 'semantic_cache': self.semantic_profile, 'context_policy': CONTEXT_POLICY if self.answer_context else 'disabled', 'calendar_route': 'explicit-semester-v1', 'history_policy': 'independent-retrieval-v1',
                 'instructions': hashlib.sha256(INSTRUCTIONS.encode()).hexdigest(),
                 'model': {key: getattr(self.models, key, None) for key in
                           ('base', 'embedding', 'rewriter', 'reranker', 'rerank_path')} if self.models else None}
@@ -176,13 +178,14 @@ class AcademicService:
                 raise DeadlineExceeded('Request time budget exhausted')
             calls = result.get('metrics', {}).get('model_calls', 0)
             worker_metrics = result.get('metrics', {})
-            for field in ('retrieval_cache_hit', 'retrieval_coalesced', 'semantic_cache_hit', 'semantic_similarity'):
+            for field in ('retrieval_cache_hit', 'retrieval_coalesced', 'semantic_cache_hit', 'semantic_similarity', 'semantic_cache_reason', 'semantic_candidate_count', 'semantic_best_similarity', 'embedding_cache_hit'):
                 if field in worker_metrics:
                     metrics[field] = worker_metrics[field]
             metrics.update(status=result['status'], coalesced=coalesced, queue_ms=queue_ms,
                            model_calls=0 if coalesced else calls, shared_model_calls=calls,
                            cache_hit=result['cache_hit'])
             metrics.update(cache_fast_path=fast_hit, cache_lookup_ms=cache_ms)
+            if fast_hit:metrics['semantic_cache_reason']='response_cache_hit'
             metrics.update(response_metrics(worker_metrics, 0, shared=coalesced))
             result['request_id'] = request_id
             return result

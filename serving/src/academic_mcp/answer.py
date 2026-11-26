@@ -8,7 +8,7 @@ import time
 import uuid
 
 import httpx
-from .call_metrics import attempts, since, record_attempt, response_metrics
+from .call_metrics import attempts, since, record_attempt, response_metrics, CallProgress, progress
 from .direct_answer import direct_answer, POLICY as DIRECT_POLICY
 
 from .runtime import (DeadlineExceeded, DataChanged, checkpoint, remaining_timeout)
@@ -66,6 +66,8 @@ class FinalAnswers:
         history=[] if history is None else history
         self.service.validate(query,history,top_k,semester,target)
         key=self.key(query,history,top_k,semester,target)
+        tracker=CallProgress()
+        progress_token=progress.set(tracker)
         try:
             revision=await self.service.read_revision(deadline)
             hit,_,_=await self.service.cache_reads.execute('read:'+key+revision,
@@ -80,28 +82,46 @@ class FinalAnswers:
                 raise DataChanged('Source changed during answer; retry')
             if time.monotonic()>=deadline:raise DeadlineExceeded('Answer deadline exhausted')
             counts = hit.pop('_model_counts', {})
+            cache_reason=hit.pop('_semantic_cache_reason',None)
+            embedding_hit=hit.pop('_embedding_cache_hit',None)
             hit['request_id']=uuid.uuid4().hex
             hit['metrics']={'cache_hit':cached,'coalesced':coalesced,
                 'retrieval_cache_hit':None if cached or coalesced else hit.pop('_retrieval_cache_hit',None),
                 'semantic_cache_hit':False if cached or coalesced else hit.pop('_semantic_cache_hit',False),
+                'semantic_cache_reason':'response_cache_hit' if cached else 'coalesced' if coalesced else cache_reason,
+                'embedding_cache_hit':None if cached or coalesced else embedding_hit,
                 **response_metrics({} if cached else counts, round((time.monotonic()-start)*1000,3), shared=coalesced)}
             hit.pop('_generation_calls',None)
             hit.pop('_retrieval_cache_hit',None)
             hit.pop('_semantic_cache_hit',None)
             return hit
-        except (DeadlineExceeded,httpx.TimeoutException):
+        except (DeadlineExceeded,httpx.TimeoutException) as exc:
+            observed,stage,retrieved=tracker.snapshot()
+            shared=getattr(exc,'coalesced',False)
+            timeout_metrics=response_metrics(observed,round((time.monotonic()-start)*1000,3),complete=False,observed=True)
+            if shared:
+                stage='shared_work'
+                timeout_metrics['shared_model_calls']=None
+                timeout_metrics['shared_model_calls_by_stage']={key:None for key in observed}
             # This is a failed completion, never counted as a fast factual answer.
             return {'status':'answer_timeout','answer':None,'can_answer':False,'citations':[],
                 'display_verbatim':False,'request_id':uuid.uuid4().hex,
-                'metrics':{'cache_hit':False,'coalesced':False,'retrieval_cache_hit':None,
-                    'semantic_cache_hit':False, **response_metrics({},round((time.monotonic()-start)*1000,3),complete=False)}}
+                'timeout_stage':stage,'retrieval_complete':retrieved,
+                'metrics':{'cache_hit':False,'coalesced':shared,'retrieval_cache_hit':None,
+                    'semantic_cache_hit':False, **timeout_metrics}}
+
+        finally:
+            progress.reset(progress_token)
 
     def generate(self,key,revision,query,history,top_k,semester,target):
         checkpoint()
         calls_before = attempts.get()
         cached=self.cached(key,revision)
         if cached is not None:return cached
+        tracker=progress.get()
+        if tracker is not None:tracker.phase('retrieval')
         result=self.service.search(query,history,top_k,semester,target)
+        if tracker is not None:tracker.phase('answer_routing')
         if result['revision']!=revision:raise DataChanged('Source changed before generation')
         status=result['status']
         direct=direct_answer(query,result.get('evidence',[])) if status in ('found','evidence_available') else None
@@ -151,7 +171,10 @@ class FinalAnswers:
                 'can_answer':can,'citations':list(dict.fromkeys(original[i-1]['url'] for i in ids)),
                 'revision':revision,'display_verbatim':True,'_generation_calls':attempt+1,
                 'freshness_warning':result.get('freshness_warning',False)}
+        if tracker is not None:tracker.phase('cache_write')
         output['_model_counts'] = since(calls_before)
+        output['_embedding_cache_hit']=result.get('metrics',{}).get('embedding_cache_hit')
+        output['_semantic_cache_reason']=result.get('metrics',{}).get('semantic_cache_reason')
         output['_semantic_cache_hit']=result.get('metrics',{}).get('semantic_cache_hit',False)
         output['_retrieval_cache_hit']=bool(result.get('cache_hit') or
             result.get('metrics',{}).get('retrieval_cache_hit'))

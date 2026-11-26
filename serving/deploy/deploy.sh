@@ -33,6 +33,14 @@ compose() {
     printf 'services:\n  mcp:\n    image: %s\n' "$ACADEMIC_IMAGE" > "$base/image.override.yaml"
     docker compose --env-file "$base/config/runtime.env" -f "$release/serving/compose.yaml" -f "$base/image.override.yaml" "$@"
 }
+# Constrain reproducible serving image history on small EC2 volumes. Never
+# prune volumes, other repositories or the current/rollback image.
+if [[ -f "$release/serving/deploy/cleanup-images.py" ]]; then
+    available_kb=$(df -Pk "$base" | awk 'NR==2 {print $4}')
+    if (( available_kb < 1048576 )); then
+        python3 "$release/serving/deploy/cleanup-images.py" --apply --protect-image "$previous_image"
+    fi
+fi
 # Build before touching the running container. No shared latest image tag.
 docker build -t "$ACADEMIC_IMAGE" "$release/serving"
 rollback() {
