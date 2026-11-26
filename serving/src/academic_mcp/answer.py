@@ -90,6 +90,7 @@ class FinalAnswers:
                 'semantic_cache_hit':False if cached or coalesced else hit.pop('_semantic_cache_hit',False),
                 'semantic_cache_reason':'response_cache_hit' if cached else 'coalesced' if coalesced else cache_reason,
                 'embedding_cache_hit':None if cached or coalesced else embedding_hit,
+                'request_budget_ms':round(self.budget*1000,3),
                 **response_metrics({} if cached else counts, round((time.monotonic()-start)*1000,3), shared=coalesced)}
             hit.pop('_generation_calls',None)
             hit.pop('_retrieval_cache_hit',None)
@@ -108,7 +109,8 @@ class FinalAnswers:
                 'display_verbatim':False,'request_id':uuid.uuid4().hex,
                 'timeout_stage':stage,'retrieval_complete':retrieved,
                 'metrics':{'cache_hit':False,'coalesced':shared,'retrieval_cache_hit':None,
-                    'semantic_cache_hit':False, **timeout_metrics}}
+                    'semantic_cache_hit':False, 'timeout_stage':stage,
+                    'request_budget_ms':round(self.budget*1000,3), **timeout_metrics}}
 
         finally:
             progress.reset(progress_token)

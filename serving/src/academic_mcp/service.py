@@ -201,6 +201,7 @@ class AcademicService:
         finally:
             metrics['latency_ms'] = round((time.monotonic() - start) * 1000, 3)
             metrics['server_elapsed_ms'] = metrics['latency_ms']
+            metrics['request_budget_ms']=round(controller.limits.request_timeout*1000,3)
             metrics['running_jobs'] = controller.running
             metrics['queued_jobs'] = controller.queued
             if isinstance(locals().get('result'), dict):

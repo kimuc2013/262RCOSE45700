@@ -42,7 +42,7 @@ if [[ -f "$release/serving/deploy/cleanup-images.py" ]]; then
     fi
 fi
 # Build before touching the running container. No shared latest image tag.
-docker build -t "$ACADEMIC_IMAGE" "$release/serving"
+docker build --build-arg SERVING_GIT_SHA="$sha" -t "$ACADEMIC_IMAGE" "$release/serving"
 rollback() {
     code=${1:-$?}
     trap - ERR

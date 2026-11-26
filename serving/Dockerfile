@@ -1,10 +1,13 @@
 FROM python:3.12-slim
+ARG SERVING_GIT_SHA=unknown
+LABEL org.opencontainers.image.revision=$SERVING_GIT_SHA
 WORKDIR /app
 COPY pyproject.toml uv.lock ./
 COPY src ./src
 # Exported from uv.lock; runtime installs the same pinned dependency versions.
 COPY requirements.lock ./
 RUN pip install --no-cache-dir -r requirements.lock && pip install --no-cache-dir --no-deps . \
+    && printf '%s\n' "$SERVING_GIT_SHA" > /app/.serving-release \
     && useradd --create-home --uid 10001 app \
     && mkdir /data && chown app:app /data
 USER app
