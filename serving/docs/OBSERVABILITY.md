@@ -61,3 +61,24 @@ academic-dashboard --port 18711
 ```
 
 브리지는127.0.0.1에만 bind하며 서버로 가는 owner 키를 Python 프로세스에서 보관한다. 브라우저에는 키를 넘기지 않는다. Host/Origin 검증, 조회 시간 범위 제한, 동시 fetch 제한과 고정 HTTPS upstream을 사용한다. 로컬/공개 화면 모두 지표 원본을 수정하지 않는다. 지표를 조회하는 요청은 학사 도구 호출 통계에 포함하지 않는다. 정적 HTML 내보내기도 계속 사용할 수 있다.
+
+### 도구 응답 공통 지표 (schema 2)
+
+`search_academic_info`, `answer_academic_question`은 `metrics`에 동일한
+호출 수와 시간 필드를 반환한다.
+
+- `model_calls`: 이 요청이 시작한 서버 모델 호출 합계.
+  `embedding_calls + rerank_calls + generation_calls + rewrite_calls`와 같다.
+  온라인 HTTP 시도 기준이며 연결 복구와 생성 형식 보정 시도도 포함한다.
+- `latency_ms`, `server_elapsed_ms`: 같은 서버 내부 경과 시간(ms)의 호환 별칭.
+  큐 대기를 포함하고 클라이언트 LLM 생성과 네트워크 왕복은 제외한다.
+- 정확 일치 응답 캐시는 각 호출 수가 0이다. 의미 캐시는 임베딩을 사용할 수 있다.
+  원문 직접 답변도 검색을 했다면 임베딩/리랭킹 호출 수가 포함된다.
+- `coalesced=true`이면 자기 호출 수는 0이다. 공유한 작업량은
+  `shared_model_calls`, `shared_model_calls_by_stage`로 표시한다.
+  요청별 총량을 합산할 때 공유 작업을 다시 더하면 안 된다.
+- 답변 시간 초과는 실행 중인 worker의 최종 호출 수를 확정할 수 없어
+  `model_calls_complete=false`, 호출 수 `null`을 반환한다. 지연 완료/실패를
+  포함한 최종 물리 API 사용량은 운영 계측 이벤트로 확인한다.
+- `metrics_schema_version=2`. 과거 응답에서 읽은 호출 수를 캐시 재사용 시
+  재계상하지 않는다. 이 수치는 Claude Desktop 자체의 모델 호출 수가 아니다.
