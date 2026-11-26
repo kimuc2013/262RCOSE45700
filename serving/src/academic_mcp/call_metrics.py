@@ -1,6 +1,8 @@
 """Response metrics count server-side HTTP attempts, never client LLM calls."""
 from contextvars import ContextVar
 import threading
+import time
+from contextlib import contextmanager
 from .release import release_metrics
 
 STAGES = ('embedding', 'rerank', 'generation', 'rewrite')
@@ -11,6 +13,9 @@ class CallProgress:
         self.counts={stage+'_calls':0 for stage in STAGES}
         self.stage='cache_lookup'
         self.retrieval_complete=False
+        self.elapsed={}
+        self.active={}
+        self.next_span=0
 
     def record(self,stage):
         with self.lock:
@@ -24,6 +29,40 @@ class CallProgress:
 
     def snapshot(self):
         with self.lock:return dict(self.counts),self.stage,self.retrieval_complete
+
+    def begin(self,stage):
+        with self.lock:
+            self.next_span+=1
+            token=self.next_span
+            self.active[token]=(stage,time.monotonic())
+            return token
+
+    def end(self,token):
+        with self.lock:
+            stage,start=self.active.pop(token)
+            self.elapsed[stage]=self.elapsed.get(stage,0)+time.monotonic()-start
+
+    def timings(self):
+        with self.lock:
+            values=dict(self.elapsed)
+            now=time.monotonic()
+            for stage,start in self.active.values():
+                values[stage]=values.get(stage,0)+now-start
+            return {stage:round(values.get(stage,0)*1000,3) for stage in
+                    ('revision','cache_lookup','work_wait','retrieval',*STAGES,'answer_routing','cache_write')}
+
+
+@contextmanager
+def timed_stage(stage):
+    tracker=progress.get()
+    token=tracker.begin(stage) if tracker is not None else None
+    try:yield
+    finally:
+        if tracker is not None:tracker.end(token)
+
+
+def measured(stage,function,*args,**kwargs):
+    with timed_stage(stage):return function(*args,**kwargs)
 
 
 progress = ContextVar('model_call_progress', default=None)
@@ -57,4 +96,7 @@ def response_metrics(counts, elapsed_ms, *, shared=False, complete=True, observe
             'shared_model_calls': total, 'shared_model_calls_by_stage': values,
             'model_calls_complete': complete, 'model_calls_observed': complete or observed, 'model_calls_scope': 'server_http_attempts',
             'metrics_schema_version': 2, **release_metrics(),
+            'stage_elapsed_ms': progress.get().timings() if progress.get() is not None else {},
+            'stage_timings_complete':complete,
+            'stage_timing_scope':'inclusive_nested_request_spans',
             'latency_ms': elapsed_ms, 'server_elapsed_ms': elapsed_ms}

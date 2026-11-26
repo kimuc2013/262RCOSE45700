@@ -5,7 +5,7 @@ from contextvars import ContextVar
 import httpx
 
 from .runtime import checkpoint, remaining_timeout
-from .call_metrics import record_attempt
+from .call_metrics import record_attempt, timed_stage
 
 physical_attempts = ContextVar('retrieval_http_attempts', default=0)
 
@@ -34,8 +34,10 @@ class ReliableModelClient:
             try:
                 physical_attempts.set(physical_attempts.get()+1)
                 body = kwargs.get('json') or {}
-                record_attempt('embedding' if 'input' in body else 'rerank')
-                return self.client.post(*args, **kwargs)
+                stage='embedding' if 'input' in body else 'rerank'
+                record_attempt(stage)
+                with timed_stage(stage):
+                    return self.client.post(*args, **kwargs)
             except (httpx.ReadError, httpx.RemoteProtocolError,
                     httpx.ConnectError, httpx.ConnectTimeout):
                 checkpoint()

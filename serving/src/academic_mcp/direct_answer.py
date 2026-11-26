@@ -2,10 +2,12 @@
 import re
 from .search import normalize, tokenize
 
-POLICY='literal-field-v5'
+POLICY='literal-field-v6'
 
 
 def direct_answer(query,evidence):
+    named=_named_fields(query,evidence)
+    if named is not None:return named
     # Explicit first-term populations must see the restriction before a generic
     # application procedure. Quote only a retrieved official restriction, with
     # its exceptions intact; never synthesize an eligibility decision.
@@ -60,3 +62,36 @@ def _item(query,row):
     return {'answer':f"공식 안내 ({row['section']})\n{text}",
             'citations':[row['url']],'chunk_ids':[row['id']],
             'answer_mode':'source_item','can_answer':True}
+
+
+def _named_fields(query,evidence):
+    """Quote explicitly requested definition/criteria fields, without inference.
+
+    Full-match only: conditions, populations, dates, comparisons and other
+    requested fields cannot silently fall into this generic description route.
+    Both fields must be unique, from the same retrieved official document.
+    """
+    q=normalize(query)
+    for row in evidence:
+        topic=normalize(row.get('doc_title','').split('>')[-1])
+        if len(topic)<2:continue
+        pattern=(re.escape(topic)+r'(?:제도)?의?(?:개념|정의)(?:과|와|및)'
+                 r'(?:지원자를)?(?:평가하는요소|평가요소|선발기준)(?:를|을)?'
+                 r'(?:설명해줘|설명해주세요|알려줘|알려주세요)?')
+        if not re.fullmatch(pattern,q):continue
+        groups={(r.get('doc_id'),r.get('url'),r.get('doc_title')) for r in evidence
+                if normalize(r.get('doc_title','').split('>')[-1])==topic}
+        if len(groups)!=1:return None
+        rows=[r for r in evidence if r.get('doc_id')==row.get('doc_id')
+              and r.get('url')==row.get('url') and r.get('doc_title')==row.get('doc_title')]
+        definitions=[r for r in rows if normalize(r.get('section','')) in ('정의','개념')]
+        criteria=[r for r in rows if normalize(r.get('section','')) in ('평가기준','선발기준')
+                  or (normalize(r.get('section',''))=='신청절차' and
+                      re.search(r'(?:^|\n)\s*-?\s*평가기준\s*(?:\n|$)',r.get('text') or ''))]
+        if len(definitions)!=1 or len(criteria)!=1:continue
+        chosen=[definitions[0],criteria[0]]
+        if not all(0<len(r.get('text') or '')<=1200 for r in chosen):continue
+        return {'answer':'\n\n'.join(f"공식 안내 ({r['section']})\n{r['text']}" for r in chosen),
+                'citations':[row['url']],'chunk_ids':[r['id'] for r in chosen],
+                'answer_mode':'source_items','can_answer':True}
+    return None
