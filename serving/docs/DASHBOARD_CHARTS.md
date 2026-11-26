@@ -27,3 +27,14 @@ reported tokens use an area. Null percentages/latencies/usage remain null and
 have visible dots. API stack totals sum embedding, rerank and generation attempts.
 Interactive legends retain their state during polling and keep at least one series
 visible. Tooltip timestamps and units use the source bucket and KST.
+
+
+## Gallery layout
+
+The first card follows the official `chart-area-interactive` composition, using
+upstream Card/Header/Content and Select components, a solid horizontal grid,
+gradient areas and bottom legend. Other cards follow the multiple-line and
+stacked-bar examples with CardFooter. Legend toggles retain the gallery's plain
+text-and-swatch appearance. Counts are not stacked with their error subset.
+Sparse live traffic stays sparse; no gallery sample values or fabricated trends
+are added. Select's primitive import is adapted to @radix-ui/react-select.

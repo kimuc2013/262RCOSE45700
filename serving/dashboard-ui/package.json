@@ -2,7 +2,21 @@
   "name": "ku-serving-dashboard-charts",
   "private": true,
   "type": "module",
-  "scripts": {"build": "node build.mjs"},
-  "dependencies": {"react": "^19.2.0", "react-dom": "^19.2.0", "recharts": "3.8.0", "clsx": "^2.1.1", "tailwind-merge": "^3.3.0", "lucide-react": "^0.468.0"},
-  "devDependencies": {"esbuild": "^0.25.0", "tailwindcss": "^4.1.0", "@tailwindcss/cli": "^4.1.0"}
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "@radix-ui/react-select": "^2.4.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.468.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "recharts": "3.8.0",
+    "tailwind-merge": "^3.3.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.1.0",
+    "esbuild": "^0.25.0",
+    "tailwindcss": "^4.1.0"
+  }
 }
