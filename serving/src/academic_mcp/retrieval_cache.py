@@ -22,7 +22,7 @@ class RankedCache:
             metrics['retrieval_cache_hit'] = False
             return retriever.search(query, top_k, chunks=chunks, revision=revision)
         width = max(top_k, min(10, retriever.candidates)) if retriever.use_reranker else 10
-        identity = ['ranked-v2-polite', ranked_query(query), width, semester, target, revision, service.profile(), service.today().isoformat()]
+        identity = ['ranked-v2-polite', ranked_query(query), width, revision, service.profile(), service.today().isoformat()]
         key = 'ranked:' + hashlib.sha256(json.dumps(identity, sort_keys=True,
             ensure_ascii=False, allow_nan=False).encode()).hexdigest()
 

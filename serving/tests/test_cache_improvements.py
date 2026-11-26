@@ -38,6 +38,7 @@ def test_polite_reuse_and_shared_embedding_across_filter_context(retrieval_setup
         second=await svc.asearch('복학 신청 방법 알려주세요',semester='2026-1')
         assert second['metrics']['model_calls']==0 and second['metrics']['retrieval_cache_hit']
         assert second['metrics']['semantic_cache_reason']=='ranked_cache_hit'
+        svc.retriever.candidates=3
         third=await svc.asearch('복학 신청 방법 알려줘',semester='2026-2')
         assert third['metrics']['embedding_cache_hit']
         assert not third['metrics']['retrieval_cache_hit']
@@ -87,11 +88,12 @@ def test_location_variant_and_first_term_restriction_use_official_text():
     assert result['chunk_ids']==['r'] and restriction['text'] in result['answer']
 
 
-def test_identical_query_vector_shared_across_different_filter_flights(retrieval_setup):
+def test_identical_query_vector_shared_across_different_candidate_windows(retrieval_setup):
     store,fake,r=retrieval_setup;r.build_index();fake.requests.clear()
+    r.candidates=2
     svc=AcademicService(store,retriever=r)
     async def run():
-        results=await asyncio.gather(*(svc.asearch('복학 신청 방법 알려줘',semester=f'2026-{i%2+1}',target=str(i)) for i in range(4)))
+        results=await asyncio.gather(*(svc.asearch('복학 신청 방법 알려줘',top_k=i+2) for i in range(4)))
         assert sum(x['metrics']['embedding_calls'] for x in results)==1
         assert sum(x['metrics']['rerank_calls'] for x in results)==4
         assert len(fake.requests)==5
