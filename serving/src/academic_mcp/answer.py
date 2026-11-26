@@ -8,6 +8,7 @@ import time
 import uuid
 
 import httpx
+from .call_metrics import attempts, since, record_attempt, response_metrics
 from .direct_answer import direct_answer, POLICY as DIRECT_POLICY
 
 from .runtime import (DeadlineExceeded, DataChanged, checkpoint, remaining_timeout)
@@ -57,6 +58,7 @@ class FinalAnswers:
                            (key,revision,self.service.clock())).fetchone()
         if not row:return None
         value=json.loads(row[0]);value['_generation_calls']=0
+        value.pop('_model_counts',None)
         return value
 
     async def answer(self,query,history=None,top_k=5,semester=None,target=None):
@@ -77,12 +79,12 @@ class FinalAnswers:
             if await self.service.read_revision(deadline)!=revision:
                 raise DataChanged('Source changed during answer; retry')
             if time.monotonic()>=deadline:raise DeadlineExceeded('Answer deadline exhausted')
+            counts = hit.pop('_model_counts', {})
             hit['request_id']=uuid.uuid4().hex
             hit['metrics']={'cache_hit':cached,'coalesced':coalesced,
                 'retrieval_cache_hit':None if cached or coalesced else hit.pop('_retrieval_cache_hit',None),
                 'semantic_cache_hit':False if cached or coalesced else hit.pop('_semantic_cache_hit',False),
-                'generation_calls':0 if cached or coalesced else hit.pop('_generation_calls',0),
-                'server_elapsed_ms':round((time.monotonic()-start)*1000,3)}
+                **response_metrics({} if cached else counts, round((time.monotonic()-start)*1000,3), shared=coalesced)}
             hit.pop('_generation_calls',None)
             hit.pop('_retrieval_cache_hit',None)
             hit.pop('_semantic_cache_hit',None)
@@ -91,10 +93,12 @@ class FinalAnswers:
             # This is a failed completion, never counted as a fast factual answer.
             return {'status':'answer_timeout','answer':None,'can_answer':False,'citations':[],
                 'display_verbatim':False,'request_id':uuid.uuid4().hex,
-                'metrics':{'server_elapsed_ms':round((time.monotonic()-start)*1000,3)}}
+                'metrics':{'cache_hit':False,'coalesced':False,'retrieval_cache_hit':None,
+                    'semantic_cache_hit':False, **response_metrics({},round((time.monotonic()-start)*1000,3),complete=False)}}
 
     def generate(self,key,revision,query,history,top_k,semester,target):
         checkpoint()
+        calls_before = attempts.get()
         cached=self.cached(key,revision)
         if cached is not None:return cached
         result=self.service.search(query,history,top_k,semester,target)
@@ -130,6 +134,7 @@ class FinalAnswers:
                         'required':['answer','can_answer','sources'],'additionalProperties':False}}}}
             if self.reasoning_effort:payload['reasoning_effort']=self.reasoning_effort
             for attempt in range(2):
+                record_attempt('generation')
                 response=self.client.post('chat/completions',json=payload,timeout=remaining_timeout(self.budget))
                 response.raise_for_status();checkpoint()
                 data=response.json()
@@ -146,6 +151,7 @@ class FinalAnswers:
                 'can_answer':can,'citations':list(dict.fromkeys(original[i-1]['url'] for i in ids)),
                 'revision':revision,'display_verbatim':True,'_generation_calls':attempt+1,
                 'freshness_warning':result.get('freshness_warning',False)}
+        output['_model_counts'] = since(calls_before)
         output['_semantic_cache_hit']=result.get('metrics',{}).get('semantic_cache_hit',False)
         output['_retrieval_cache_hit']=bool(result.get('cache_hit') or
             result.get('metrics',{}).get('retrieval_cache_hit'))
@@ -159,7 +165,7 @@ class FinalAnswers:
             if db.execute('SELECT count(*) FROM cache').fetchone()[0]>=1000:
                 db.execute('DELETE FROM cache WHERE key IN (SELECT key FROM cache ORDER BY expires LIMIT 100)')
             db.execute('INSERT OR REPLACE INTO cache VALUES(?,?,?,?)',
-                (key,revision,self.service.clock()+self.service.cache_ttl,json.dumps(output,ensure_ascii=False)))
+                (key,revision,self.service.clock()+self.service.cache_ttl,json.dumps({k:v for k,v in output.items() if k != '_model_counts'},ensure_ascii=False)))
         return output
 
     def parse(self,data,source_count):
