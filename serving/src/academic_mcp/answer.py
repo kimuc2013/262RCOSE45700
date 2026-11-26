@@ -71,18 +71,22 @@ class FinalAnswers:
         tracker=CallProgress()
         progress_token=progress.set(tracker)
         try:
+            tracker.phase('revision')
             with timed_stage('revision'):
                 revision=await self.service.read_revision(deadline)
+            tracker.phase('cache_lookup')
             with timed_stage('cache_lookup'):
                 hit,_,_=await self.service.cache_reads.execute('read:'+key+revision,
                     lambda:self.cached(key,revision),deadline=deadline)
             coalesced=False
             if hit is None:
+                tracker.phase('admission')
                 with timed_stage('work_wait'):
                     hit,coalesced,queue_ms=await self.service.requests.execute(key+revision,
                         lambda:self.generate(key,revision,query,history,top_k,semester,target),deadline=deadline)
                 cached=False
             else:cached=True
+            tracker.phase('revision')
             with timed_stage('revision'):
                 current_revision=await self.service.read_revision(deadline)
             if current_revision!=revision:

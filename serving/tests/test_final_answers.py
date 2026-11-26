@@ -374,3 +374,14 @@ def test_exact_public_field_route_skips_models_and_checks_revision(service,monke
         assert '3학기' in result['answer']
     try:asyncio.run(run())
     finally:answer.close()
+
+
+def test_exact_field_route_preserves_old_source_warning(service):
+    from datetime import date
+    service.today=lambda:date(2030,1,1)
+    answer=generator(service)
+    async def run():
+        result=await answer.answer('이중전공 신청자격 알려줘')
+        assert result['freshness_warning'] and result['metrics']['model_calls']==0
+    try:asyncio.run(run())
+    finally:answer.close()
