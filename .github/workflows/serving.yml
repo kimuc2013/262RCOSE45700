@@ -36,7 +36,10 @@ jobs:
       - run: uv run pytest -q
         working-directory: serving
       - name: Verify container build
-        run: docker build -t ku-academic-mcp:ci serving
+        run: docker build --build-arg SERVING_GIT_SHA="$GITHUB_SHA" -t ku-academic-mcp:ci serving
+      - name: Verify baked release identity
+        run: |
+          docker run --rm ku-academic-mcp:ci python -c 'import sys; from academic_mcp.release import release_metrics; assert release_metrics()["release_sha"] == sys.argv[1]; print(release_metrics()["server_version"])' "$GITHUB_SHA"
   deploy:
     name: Optional SSM deployment
     needs: test

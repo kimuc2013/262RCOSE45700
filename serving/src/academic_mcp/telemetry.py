@@ -17,7 +17,7 @@ from pathlib import Path
 trace = ContextVar('telemetry_trace', default=('', 'live'))
 REQUEST_FIELDS = {'tool', 'status', 'error_type', 'elapsed_ms', 'cache_hit',
     'coalesced', 'retrieval_cache_hit', 'retrieval_coalesced', 'semantic_cache_hit', 'answer_mode', 'can_answer', 'response_bytes', 'semantic_cache_reason', 'semantic_candidate_count', 'semantic_best_similarity',
-    'embedding_cache_hit', 'model_calls', 'embedding_calls', 'rerank_calls', 'generation_calls', 'rewrite_calls', 'model_calls_complete'}
+    'embedding_cache_hit', 'model_calls', 'embedding_calls', 'rerank_calls', 'generation_calls', 'rewrite_calls', 'model_calls_complete', 'server_version', 'release_sha', 'server_instance', 'request_budget_ms', 'timeout_stage'}
 API_FIELDS = {'stage', 'model', 'elapsed_ms', 'status_code', 'error_type',
     'prompt_tokens', 'completion_tokens', 'total_tokens', 'cached_prompt_tokens'}
 
@@ -81,7 +81,8 @@ class Telemetry:
                 answer_mode=result.get('answer_mode'), can_answer=result.get('can_answer'))
             for field in ('semantic_cache_reason','semantic_candidate_count','semantic_best_similarity',
                           'embedding_cache_hit','model_calls','embedding_calls','rerank_calls',
-                          'generation_calls','rewrite_calls','model_calls_complete'):
+                          'generation_calls','rewrite_calls','model_calls_complete','server_version',
+                          'release_sha','server_instance','request_budget_ms','timeout_stage'):
                 if field in metrics:values[field]=metrics[field]
             values['response_bytes'] = len(json.dumps(result, ensure_ascii=False).encode())
             return result

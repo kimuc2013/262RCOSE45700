@@ -1,6 +1,7 @@
 """Response metrics count server-side HTTP attempts, never client LLM calls."""
 from contextvars import ContextVar
 import threading
+from .release import release_metrics
 
 STAGES = ('embedding', 'rerank', 'generation', 'rewrite')
 class CallProgress:
@@ -55,5 +56,5 @@ def response_metrics(counts, elapsed_ms, *, shared=False, complete=True, observe
     return {**own, 'model_calls': 0 if shared else total,
             'shared_model_calls': total, 'shared_model_calls_by_stage': values,
             'model_calls_complete': complete, 'model_calls_observed': complete or observed, 'model_calls_scope': 'server_http_attempts',
-            'metrics_schema_version': 2,
+            'metrics_schema_version': 2, **release_metrics(),
             'latency_ms': elapsed_ms, 'server_elapsed_ms': elapsed_ms}
