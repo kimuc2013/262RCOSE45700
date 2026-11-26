@@ -141,8 +141,10 @@ class RequestController:
             async with asyncio.timeout(wait):
                 result = await asyncio.shield(flight.task)
             return copy.deepcopy(result), coalesced, flight.queue_ms
-        except TimeoutError as exc:
-            raise DeadlineExceeded('Request time budget exhausted') from exc
+        except (TimeoutError, DeadlineExceeded) as exc:
+            error=DeadlineExceeded('Request time budget exhausted')
+            error.coalesced=coalesced
+            raise error from exc
         finally:
             flight.waiters -= 1
             self._waiters -= 1

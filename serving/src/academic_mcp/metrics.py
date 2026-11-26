@@ -44,6 +44,9 @@ def aggregate(events):
                 r.get('retrieval_cache_hit') is True for r in rows), len(rows)),
             'retrieval_coalesced': sum(r.get('retrieval_coalesced') is True for r in rows),
             'semantic_cache_hit_rate': fraction(sum(r.get('semantic_cache_hit') is True for r in rows), len(rows)),
+            'semantic_cache_reasons': dict(Counter(r['semantic_cache_reason'] for r in rows if r.get('semantic_cache_reason'))),
+            'embedding_cache_hit_rate': fraction(sum(r.get('embedding_cache_hit') is True for r in rows), sum(isinstance(r.get('embedding_cache_hit'),bool) for r in rows)),
+            'reported_call_counts': {field: {'sum':sum(r[field] for r in rows if type(r.get(field)) is int), 'reported_requests':sum(type(r.get(field)) is int for r in rows)} for field in ('model_calls','embedding_calls','rerank_calls','generation_calls','rewrite_calls')},
             'retrieval_cache_observed': dict(Counter(str(r['retrieval_cache_hit']).lower()
                 for r in rows if isinstance(r.get('retrieval_cache_hit'), bool))),
             'all_latency': latency(rows), 'answered_latency': latency(answered),

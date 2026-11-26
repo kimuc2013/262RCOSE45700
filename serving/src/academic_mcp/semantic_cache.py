@@ -8,7 +8,7 @@ import unicodedata
 
 from .runtime import checkpoint, DataChanged
 
-POLICY = 'guarded-semantic-v1'
+POLICY = 'guarded-semantic-v2'
 # Multiple topic/intent matches are retained, not resolved by precedence.
 TOPICS = {
  'leave': r'휴학|학적을 유지하며.*쉬', 'return': r'복학', 'startup': r'창업',
@@ -43,7 +43,7 @@ INTENTS = {
 QUALIFIERS = {
  'freshman':r'신입생', 'transfer_student':r'편입', 'undergrad':r'학부',
  'graduate':r'대학원|석사|박사', 'seoul':r'서울', 'sejong':r'세종',
- 'first_term':r'첫\s*(?:번째\s*)?학기', 'during_term':r'학기\s*(?:중|진행|도중)',
+ 'first_term':r'첫\s*(?:번째\s*)?학기', 'during_term':r'학기(?:가|를)?\s*(?:중|진행|도중)',
  'foreign':r'해외|외국', 'today':r'오늘', 'tomorrow':r'내일', 'current':r'이번|현재|지금',
  'illness':r'질병|아파|아픈|병원', 'pregnancy':r'임신', 'birth':r'출산',
  'international_student':r'외국인|유학생', 'enrolled':r'재학생|재학 중', 'on_leave':r'휴학생|휴학 중',
@@ -56,6 +56,17 @@ def signature(query):
     q=q.replace('아홉 번째','9').replace('아홉번째','9')
     topics=tuple(k for k,v in TOPICS.items() if re.search(v,q))
     intents=tuple(k for k,v in INTENTS.items() if re.search(v,q))
+    # A refund amount and a refund procedure are different fields. Generic
+    # "어떻게 되나요" is not itself a request for procedural steps.
+    if re.search(r'환불|반환|돌려받',q):
+        refund_intents=['refund']
+        if re.search(r'얼마|어느 정도|금액|비율',q):refund_intents.append('amount')
+        if re.search(r'방법|절차|경로|어디서|어느 곳|어떻게.*(?:신청|받)',q):refund_intents.append('procedure')
+        if re.search(r'언제|기한|마감|시기|시점',q):refund_intents.append('timing')
+        intents=tuple(refund_intents)
+    # Whether a separate application is required is distinct from how to apply.
+    if re.search(r'신청(?:\s*절차)?(?:은|는|이|가|을|를)?\s*(?:해야|필요|거쳐야)',q) and not re.search(r'언제|서류|자격|몇|얼마',q):
+        intents=('application_requirement',)
     if not topics or not intents:
         return None
     # Preserve all numbers (including dates, credits, semesters), grade letters,
@@ -80,20 +91,28 @@ class SemanticCache:
     def __init__(self,service,threshold=.94,margin=.02):
         self.service,self.threshold,self.margin=service,threshold,margin
 
-    def prepare(self,query,width,revision,semester,target):
+    def prepare(self,query,width,revision,semester,target,metrics=None):
+        metrics={} if metrics is None else metrics
         from .retrieval import Retriever
         r=self.service.retriever
         sig=signature(query)
-        if not self.service.semantic_cache_enabled or type(r) is not Retriever or not sig or r.min_rerank_score is not None:
+        reason = ('disabled' if not self.service.semantic_cache_enabled else
+                  'unsupported_retriever' if type(r) is not Retriever else
+                  'threshold_policy' if r.min_rerank_score is not None else
+                  'signature_missing' if not sig else None)
+        if reason:
+            metrics['semantic_cache_reason']=reason
             return None
+        metrics['semantic_cache_reason']='no_compatible_candidate'
         context=[POLICY,width,revision,self.service.profile(),self.service.today().isoformat(),semester,target,sig]
         bucket='semantic:'+hashlib.sha256(json.dumps(context,sort_keys=True,ensure_ascii=False).encode()).hexdigest()+':'
         # Use the module's validated embedding call. On a miss, give the same
         # vector to a request-local copy so the module never embeds twice.
-        vector=normalized(r.embed([query])[0]);checkpoint()
+        vector=normalized(self.service.query_embeddings.embed(query,revision,metrics)[0]);checkpoint()
         return bucket,vector
 
-    def lookup(self,prepared):
+    def lookup(self,prepared,metrics=None):
+        metrics={} if metrics is None else metrics
         if prepared is None:return None
         bucket,vector=prepared;s=self.service
         with s.store.connect(timeout=1) as db:
@@ -106,26 +125,37 @@ class SemanticCache:
             score=sum(a*b for a,b in zip(vector,v))
             candidates.append((score,item['result'],expires))
         candidates.sort(key=lambda x:x[0],reverse=True)
-        if not candidates or candidates[0][0]<self.threshold:return None
+        metrics['semantic_candidate_count']=len(candidates)
+        if not candidates:return None
+        metrics['semantic_best_similarity']=round(candidates[0][0],6)
+        if candidates[0][0]<self.threshold:
+            metrics['semantic_cache_reason']='below_threshold'
+            return None
         score,result,expires=candidates[0]
         # Near-tied candidates with a different top source are ambiguous.
         top=lambda r:tuple(e['id'] for e in r['evidence'][:1])
-        if any(score-other<self.margin and top(result)!=top(r) for other,r,_ in candidates[1:]):return None
+        if any(score-other<self.margin and top(result)!=top(r) for other,r,_ in candidates[1:]):
+            metrics['semantic_cache_reason']='ambiguous_sources'
+            return None
+        metrics['semantic_cache_reason']='hit'
         result=copy.deepcopy(result)
         result['semantic_cache']={'similarity':round(score,6),'score_origin':'cached_query','policy':POLICY,'expires_at':expires}
         result['score_type']='cached_'+str(result['score_type'])
         for e in result['evidence']:e['score_type']=result['score_type']
         return result
 
-    def search(self,query,width,*,chunks,revision,prepared):
+    def search(self,query,width,*,chunks,revision,prepared,metrics=None):
+        metrics={} if metrics is None else metrics
         r=self.service.retriever
-        if prepared is None:return r.search(query,width,chunks=chunks,revision=revision)
-        vector=prepared[1]
+        if prepared is None:
+            from .retrieval import Retriever
+            if type(r) is not Retriever:return r.search(query,width,chunks=chunks,revision=revision)
+        vector=prepared[1] if prepared is not None else None
         r._load_vectors(revision, len(chunks))
         worker=copy.copy(r)
         def embed(texts):
             if texts!=[query]:raise ValueError('Unexpected query embedding request')
-            return [vector]
+            return [vector] if vector is not None else self.service.query_embeddings.embed(query,revision,metrics)
         worker.embed=embed
         return worker.search(query,width,chunks=chunks,revision=revision)
 

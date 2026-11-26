@@ -58,7 +58,8 @@ def test_scope_ttl_and_no_transitive_aliases(retrieval_setup):
     assert x['semantic_cache']['expires_at']==1010
     now[0]=1011
     x=s.search('복학 신청 절차를 알려줘',semester='2026-2')
-    assert not x['metrics']['semantic_cache_hit'] and x['metrics']['model_calls']==2
+    assert not x['metrics']['semantic_cache_hit'] and x['metrics']['model_calls']==1
+    assert x['metrics']['embedding_cache_hit'] and x['metrics']['rerank_calls']==1
 
 def test_semantic_disabled_with_model_threshold_and_invalid_vectors(retrieval_setup):
     s,fake=ready(retrieval_setup);s.retriever.min_rerank_score=.1

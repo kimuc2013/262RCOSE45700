@@ -78,7 +78,26 @@ academic-dashboard --port 18711
   `shared_model_calls`, `shared_model_calls_by_stage`로 표시한다.
   요청별 총량을 합산할 때 공유 작업을 다시 더하면 안 된다.
 - 답변 시간 초과는 실행 중인 worker의 최종 호출 수를 확정할 수 없어
-  `model_calls_complete=false`, 호출 수 `null`을 반환한다. 지연 완료/실패를
+  `model_calls_complete=false`와 응답 시점까지 시작한 호출 수를 반환한다.
+  `model_calls_observed=true`는 그 시점의 실측값이며 최종 총량은 아니다.
+  `timeout_stage`, `retrieval_complete`로 지연 구간을 구분한다. 지연 완료/실패를
   포함한 최종 물리 API 사용량은 운영 계측 이벤트로 확인한다.
 - `metrics_schema_version=2`. 과거 응답에서 읽은 호출 수를 캐시 재사용 시
   재계상하지 않는다. 이 수치는 Claude Desktop 자체의 모델 호출 수가 아니다.
+
+
+### 캐시 재사용 진단
+
+- `semantic_cache_reason`: 응답/검색 순위 적중, 의미 적중, `signature_missing`,
+  `no_compatible_candidate`, `below_threshold`, `ambiguous_sources`, 비활성 사유.
+  질문, 문서 본문, 조건 원문은 운영 계측에 저장하지 않는다.
+- `semantic_candidate_count`, `semantic_best_similarity`: 같은 보호 조건 안의
+  후보 수와 최고 유사도. 다른 대상/학기/숫자 조건으로 후보를 넓히지 않는다.
+- `embedding_cache_hit`: 온라인 질문 벡터 조회 여부. 질문과 임베딩 모델,
+  모델 버전 및 데이터 버전으로 격리한다. 실패한 벡터는 저장하지 않는다.
+  임베딩만 재사용해도 리랭킹은 새로 수행할 수 있다.
+- 검색 순위 캐시는 명시적인 요청 존댓말만 정규화한다. 날짜, 숫자, 학점,
+  부정과 대상은 삭제하지 않는다. 전체 응답과 의미 캐시의 학기/대상
+  격리는 유지한다. 입력 질의만 사용하는 검색 순위는 기존 후보 폭 재사용을 유지한다.
+- 대시보드의 캐시 진단은 필드가 추가된 이후 관측분만 보여준다. 임베딩
+  적중률 분모는 임베딩 캐시 조회를 관측한 요청이며 전체 요청이 아니다.

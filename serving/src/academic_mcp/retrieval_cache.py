@@ -4,6 +4,7 @@ import hashlib
 import json
 import threading
 
+from .cache import ranked_query
 from .runtime import checkpoint, remaining_timeout, Overloaded, DataChanged
 
 
@@ -21,7 +22,7 @@ class RankedCache:
             metrics['retrieval_cache_hit'] = False
             return retriever.search(query, top_k, chunks=chunks, revision=revision)
         width = max(top_k, min(10, retriever.candidates)) if retriever.use_reranker else 10
-        identity = ['ranked-v1', query, width, revision, service.profile(), service.today().isoformat()]
+        identity = ['ranked-v2-polite', ranked_query(query), width, revision, service.profile(), service.today().isoformat()]
         key = 'ranked:' + hashlib.sha256(json.dumps(identity, sort_keys=True,
             ensure_ascii=False, allow_nan=False).encode()).hexdigest()
 
@@ -34,6 +35,8 @@ class RankedCache:
 
         def output(result, hit, shared=False, semantic=False):
             metrics.update(retrieval_cache_hit=hit, retrieval_coalesced=shared, semantic_cache_hit=semantic)
+            if hit and not semantic:
+                metrics['semantic_cache_reason']='ranked_cache_hit'
             if semantic:
                 metrics['semantic_similarity'] = result['semantic_cache']['similarity']
             result = copy.deepcopy(result)
@@ -56,11 +59,11 @@ class RankedCache:
             hit = read()
             if hit is not None:
                 return output(hit, True, shared)
-            prepared = service.semantic_cache.prepare(query, width, revision, semester, target)
-            result = service.semantic_cache.lookup(prepared)
+            prepared = service.semantic_cache.prepare(query, width, revision, semester, target, metrics)
+            result = service.semantic_cache.lookup(prepared, metrics)
             semantic = result is not None
             if not semantic:
-                result = service.semantic_cache.search(query, width, chunks=chunks, revision=revision, prepared=prepared)
+                result = service.semantic_cache.search(query, width, chunks=chunks, revision=revision, prepared=prepared, metrics=metrics)
             checkpoint()
             # Retriever has already validated responses and applied its threshold.
             with service.store.connect() as db:
