@@ -48,7 +48,12 @@ def test_owner_gateway_marker_required_and_new_events_appear(service, tmp_path, 
             assert client.get('/ops/api/metrics?hours=9999', headers=h).status_code == 400
             r = client.get('/ops/api/metrics?hours=1', headers=h)
             assert r.status_code == 200 and r.json()['groups']['live']['requests'] == 1
-            assert len(r.json()['groups']['all']['series']['points']) == 60
+            assert r.json()['groups']['all']['series']['bucket_seconds']==300
+            assert 12 <= len(r.json()['groups']['all']['series']['points']) <= 13
+            assert client.get('/ops/api/metrics?bucket_minutes=7',headers=h).status_code==400
+            assert client.get('/ops/api/metrics?bucket_minutes=foo',headers=h).json()['error']=='invalid_bucket'
+            fine=client.get('/ops/api/metrics?hours=1&bucket_minutes=1',headers=h).json()
+            assert fine['groups']['all']['series']['bucket_seconds']==60
             assert 'Authorization' not in r.text
             # Another supported window triggers a fresh read after new work.
             t.emit('request', {'tool': 'search_academic_info', 'status': 'found', 'elapsed_ms': 12, 'cache_hit': True})
@@ -94,7 +99,8 @@ def test_loopback_bridge_hides_owner_key_and_rejects_bad_origin():
     def upstream(request):
         calls.append(request)
         assert request.headers['Authorization'] == 'Bearer private-owner-secret'
-        assert str(request.url) == 'https://metrics.test/ops/api/metrics?hours=1'
+        assert request.url.path=='/ops/api/metrics' and request.url.params['hours']=='1'
+        assert request.url.params['bucket_minutes'] in ('1','5')
         return httpx.Response(200, json={'window': {}, 'groups': {}})
     with httpx.Client(transport=httpx.MockTransport(upstream)) as remote:
         server = ThreadingHTTPServer(('127.0.0.1', 0), lambda *a: None)
@@ -108,10 +114,14 @@ def test_loopback_bridge_hides_owner_key_and_rejects_bad_origin():
                 assert 'const LOCAL=true' in page.text and 'private-owner-secret' not in page.text
                 good = client.get('/api/metrics?hours=1')
                 assert good.status_code == 200 and 'private-owner-secret' not in good.text
+                assert calls[0].url.params['bucket_minutes']=='5'
+                assert client.get('/api/metrics?hours=1&bucket_minutes=1').status_code==200
+                assert calls[-1].url.params['bucket_minutes']=='1'
                 assert client.get('/api/metrics', headers={'Host': 'evil.test'}).status_code == 403
                 assert client.get('/api/metrics', headers={'Origin': 'https://evil.test'}).status_code == 403
                 assert client.get('/api/metrics?hours=999').status_code == 400
-                assert len(calls) == 1
+                assert client.get('/api/metrics?bucket_minutes=7').status_code==400
+                assert len(calls) == 2
         finally:
             server.shutdown()
             server.server_close()
@@ -134,3 +144,45 @@ def test_dashboard_credentials_not_persisted_or_embedded():
     assert 'localStorage' not in page and 'sessionStorage' not in page
     assert 'setTimeout(poll,5000)' in page
     assert "cache:'no-store'" in page
+
+
+def test_five_minute_reaggregation_uses_raw_samples_not_average_of_rates_or_percentiles():
+    rows=[{'ts':61,'kind':'request','tool':'search_academic_info','status':'evidence_available','elapsed_ms':1010,'cache_hit':True}]
+    rows += [{'ts':121+i,'kind':'request','tool':'search_academic_info','status':'error' if i==0 else 'evidence_available','elapsed_ms':10,'cache_hit':False} for i in range(9)]
+    points=time_series(rows,0,600,bucket_seconds=300)['points']
+    first,empty=points
+    assert first['cache_samples']==10 and first['cache_hits']==1 and first['cache_rate']==10
+    assert first['latency_samples']==10 and first['p50_ms']==10 and first['p95_ms']==560
+    assert first['requests']==10 and first['nonfailures']==9 and first['failures']==1
+    assert empty['cache_samples']==0 and empty['cache_rate'] is None
+    assert empty['latency_samples']==0 and empty['p50_ms'] is None and empty['p95_ms'] is None
+
+
+def test_series_scope_counts_boundaries_and_partial_intervals():
+    rows=[{'ts':90,'kind':'request','tool':'search_academic_info','status':'found','elapsed_ms':99},
+          {'ts':120,'kind':'request','tool':'search_academic_info','status':'found','elapsed_ms':20,'cache_hit':True},
+          {'ts':300,'kind':'request','tool':'get_academic_calendar','status':'found','elapsed_ms':30},
+          {'ts':301,'kind':'api','stage':'embedding'},
+          {'ts':660,'kind':'request','tool':'search_academic_info','status':'found','elapsed_ms':99}]
+    points=time_series(rows,100,650,bucket_seconds=300)['points']
+    assert [p['ts'] for p in points]==[0,300,600]
+    assert points[0]['partial'] and points[0]['interval_start']==100 and points[0]['interval_end']==300
+    assert points[0]['cache_samples']==1 and points[0]['latency_samples']==1
+    assert points[1]['requests']==1 and points[1]['cache_samples']==0 and points[1]['cache_rate'] is None
+    assert points[1]['latency_samples']==1 and points[1]['p50_ms']==points[1]['p95_ms']==30
+    assert points[1]['api_calls']=={'embedding':1}
+    assert points[2]['partial'] and points[2]['interval_end']==650 and points[2]['requests']==0
+    assert sum(p['requests'] for p in points)==2
+
+
+def test_reader_cache_is_partitioned_by_aggregation_interval(monkeypatch):
+    calls=[]
+    def read(path,hours,**kwargs):calls.append(kwargs['bucket_minutes']);return {'bucket':kwargs['bucket_minutes']}
+    monkeypatch.setattr('academic_mcp.live_metrics.read_report',read)
+    async def run():
+        reader=MetricsReader('unused')
+        assert (await reader.get(1,5))['bucket']==5
+        assert (await reader.get(1,1))['bucket']==1
+        assert (await reader.get(1,5))['bucket']==5
+        assert calls==[5,1]
+    asyncio.run(run())

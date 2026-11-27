@@ -42,12 +42,15 @@ def make_handler(client, upstream, token, port):
                 return self.reply(404, b'{"error":"not_found"}')
             query = parse_qs(url.query)
             hours = query.get('hours', ['1'])[0]
+            bucket_minutes=query.get('bucket_minutes',['5'])[0]
             if hours not in ('.25', '0.25', '1', '24'):
                 return self.reply(400, b'{"error":"invalid_window"}')
+            if bucket_minutes not in ('1','5','15'):
+                return self.reply(400,b'{"error":"invalid_bucket"}')
             if not slots.acquire(blocking=False):
                 return self.reply(429, b'{"error":"busy"}')
             try:
-                response = client.get(upstream+'/ops/api/metrics', params={'hours': hours},
+                response = client.get(upstream+'/ops/api/metrics', params={'hours': hours,'bucket_minutes':bucket_minutes},
                     headers={'Authorization': 'Bearer '+token}, timeout=10, follow_redirects=False)
                 if response.status_code != 200:
                     return self.reply(response.status_code if response.status_code in (401, 503) else 502,

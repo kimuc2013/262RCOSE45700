@@ -26,14 +26,15 @@ class MetricsReader:
         self.cache = {}
         self.lock = asyncio.Lock()
 
-    async def get(self, hours):
+    async def get(self, hours, bucket_minutes=5):
         async with self.lock:
-            cached = self.cache.get(hours)
+            key=(hours,bucket_minutes)
+            cached = self.cache.get(key)
             if cached and time.monotonic()-cached[0] < self.ttl:
                 return cached[1]
             # Analytics does not occupy MCP request slots or block its event loop.
-            report = await asyncio.to_thread(read_report, self.path, hours, include_series=True)
-            self.cache[hours] = (time.monotonic(), report)
+            report = await asyncio.to_thread(read_report, self.path, hours, include_series=True, bucket_minutes=bucket_minutes)
+            self.cache[key] = (time.monotonic(), report)
             return report
 
 
@@ -56,10 +57,16 @@ def register_routes(mcp, path):
             hours = float(request.query_params.get('hours', '1'))
         except ValueError:
             hours = 0
+        try:
+            bucket_minutes=int(request.query_params.get('bucket_minutes','5'))
+        except ValueError:
+            bucket_minutes=0
         if hours not in (.25, 1, 24):
             return JSONResponse({'error': 'invalid_window'}, status_code=400, headers=HEADERS)
         try:
-            report = await reader.get(hours)
+            if bucket_minutes not in (1,5,15):
+                return JSONResponse({'error':'invalid_bucket'},status_code=400,headers=HEADERS)
+            report = await reader.get(hours,bucket_minutes)
         except (sqlite3.Error, OSError):
             return JSONResponse({'error': 'metrics_not_ready'}, status_code=503, headers=HEADERS)
         return JSONResponse(report, headers=HEADERS)

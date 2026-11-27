@@ -104,11 +104,14 @@ def aggregate(events):
         'tools': tools, 'api_stages': stages}
 
 
-def time_series(events, start, end, buckets=60):
-    step = (end-start)/buckets
-    bins = [[] for _ in range(buckets)]
+def time_series(events, start, end, buckets=60, *, bucket_seconds=None):
+    step = (end-start)/buckets if bucket_seconds is None else bucket_seconds
+    aligned_start = start if bucket_seconds is None else math.floor(start/step)*step
+    count = buckets if bucket_seconds is None else max(1, math.ceil((end-aligned_start)/step))
+    bins = [[] for _ in range(count)]
     for event in events:
-        i = min(buckets-1, max(0, int((event['ts']-start)/step)))
+        if not start <= event['ts'] <= end:continue
+        i = min(count-1, max(0, int((event['ts']-aligned_start)/step)))
         bins[i].append(event)
     points = []
     for i, rows in enumerate(bins):
@@ -117,22 +120,36 @@ def time_series(events, start, end, buckets=60):
         api = [r for r in rows if r['kind'] == 'api']
         gen = [r for r in api if r['stage'] == 'generation']
         tokens = [r['total_tokens'] for r in gen if type(r.get('total_tokens')) is int]
-        points.append({'ts': start+i*step, 'requests': len(req),
-            'failures': sum(r['status'] in ('error', 'cancelled', 'answer_timeout') for r in req),
-            'model_free_response_rate':model_free_stats([r for r in req if r['tool']=='answer_academic_question'])['model_free_response_rate']['percent'],
-            'cache_rate': fraction(sum(r.get('cache_hit') is True for r in cacheable), len(cacheable))['percent'],
-            'effective_cache_rate': fraction(sum(r.get('cache_hit') is True or
-                r.get('retrieval_cache_hit') is True for r in cacheable), len(cacheable))['percent'],
-            'shared_rate': fraction(sum(r.get('coalesced') is True for r in cacheable), len(cacheable))['percent'],
-            'semantic_cache_rate': fraction(sum(r.get('semantic_cache_hit') is True for r in cacheable), len(cacheable))['percent'],
-            'p50_ms': latency(req)['p50_ms'], 'p95_ms': latency(req)['p95_ms'],
+        cache_hits=sum(r.get('cache_hit') is True for r in cacheable)
+        reused=sum(r.get('cache_hit') is True or r.get('retrieval_cache_hit') is True for r in cacheable)
+        shared=sum(r.get('coalesced') is True for r in cacheable)
+        semantic=sum(r.get('semantic_cache_hit') is True for r in cacheable)
+        free=model_free_stats([r for r in req if r['tool']=='answer_academic_question'])
+        times=latency(req)
+        left=aligned_start+i*step;right=left+step
+        failures=sum(r['status'] in ('error','cancelled','answer_timeout') for r in req)
+        points.append({'ts': left, 'interval_start':max(left,start),'interval_end':min(right,end),
+            'partial':left<start or right>end,
+            'requests': len(req),'nonfailures':len(req)-failures,
+            'cache_samples':len(cacheable),'cache_hits':cache_hits,'effective_cache_hits':reused,
+            'shared_requests':shared,'semantic_cache_hits':semantic,'latency_samples':times['n'],
+            'model_free_samples':free['model_free_response_rate']['denominator'],
+            'model_free_count':free['model_free_response_rate']['count'],
+            'model_free_measured':free['model_free_measurement_coverage']['count'],
+            'failures':failures,
+            'model_free_response_rate':free['model_free_response_rate']['percent'],
+            'cache_rate':fraction(cache_hits,len(cacheable))['percent'],
+            'effective_cache_rate':fraction(reused,len(cacheable))['percent'],
+            'shared_rate':fraction(shared,len(cacheable))['percent'],
+            'semantic_cache_rate':fraction(semantic,len(cacheable))['percent'],
+            'p50_ms': times['p50_ms'], 'p95_ms': times['p95_ms'],
             'api_calls': dict(Counter(r['stage'] for r in api)),
             'generation_tokens': sum(tokens) if tokens else (0 if not gen else None),
             'generation_usage_reported': len(tokens), 'generation_attempts': len(gen)})
-    return {'bucket_seconds': step, 'points': points}
+    return {'schema_version':2,'bucket_seconds':step,'start':start,'end':end,'points':points}
 
 
-def read_report(path, hours=24, now=None, *, include_series=False):
+def read_report(path, hours=24, now=None, *, include_series=False, bucket_minutes=None):
     now = time.time() if now is None else now
     start = now-hours*3600
     uri = Path(path).resolve().as_uri()+'?mode=ro'
@@ -147,7 +164,7 @@ def read_report(path, hours=24, now=None, *, include_series=False):
         selected = events if group == 'all' else [e for e in events if e['traffic'] == group]
         groups[group] = aggregate(selected)
         if include_series:
-            groups[group]['series'] = time_series(selected, start, now)
+            groups[group]['series'] = time_series(selected, start, now, bucket_seconds=bucket_minutes*60 if bucket_minutes is not None else None)
     return {'server':release_metrics(),'window': {'start': start, 'end': now, 'hours': hours,
             'first_observed_event': min((e['ts'] for e in events), default=None)},
         'health_retained_runs': {'dropped_events': health[0] or 0, 'write_errors': health[1] or 0},
