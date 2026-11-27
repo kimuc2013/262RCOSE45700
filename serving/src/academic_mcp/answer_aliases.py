@@ -4,7 +4,7 @@ import json
 import re
 from .cache import ranked_query
 
-POLICY='verified-answer-intents-v4'
+POLICY='verified-answer-intents-v5'
 
 
 def polite_query(query):
@@ -17,6 +17,7 @@ def polite_query(query):
 # Whole-question grammars, with every unmatched topic/condition retained in the
 # topic slot. A partial keyword match is never an equivalence proof.
 GRAMMARS=(
+ ('application_location_and_procedure',r'(?P<topic>.+?)신청(?:은|는)?(?:어디서|어디에서)(?:어떻게해|어떻게하나요|어떻게하면되나요)'),
  ('application_procedure',r'(?P<topic>.+?)신청(?:은|는)?(?:어디서해|어디에서해)'),
  ('application_procedure',r'(?P<topic>.+?)어디서신청하나요'),
  ('location',r'(?P<topic>.+?)(?:은|는)?(?:어디서해|어디에서해)'),
@@ -53,6 +54,11 @@ GRAMMARS=(
 
 def intent(query):
     q=polite_query(query)
+    # Normalize only the known institution spelling and its grammatical case,
+    # retaining an explicit scope in the proof. Other schools/qualifiers survive.
+    school=re.match(r'^(고려대학교|고려대)(?:에서는|에서|에는|에선|에|는|은|의)?',q)
+    scope='고려대학교:' if school else ''
+    if school:q=q[school.end():]
     matches=set()
     for field,pattern in GRAMMARS:
         match=re.fullmatch(pattern,q)
@@ -64,7 +70,7 @@ def intent(query):
             if field in ('process','location') and topic in ('복학','휴학','자퇴'):
                 field='application_procedure'
             if field in ('location','process'):continue
-            if 1<len(topic)<=128:matches.add((topic,field))
+            if 1<len(topic)<=128:matches.add((scope+topic,field))
     # Different parse meanings cannot be resolved by rule order.
     return next(iter(matches)) if len(matches)==1 else None
 
@@ -76,8 +82,15 @@ def proof(query):
 
 def retrieval_proof(query):
     """Evidence-only field equivalence; never authorizes a generated answer hit."""
-    known=proof(query)
-    if known:return known
+    # An explicit request to use MCP selects transport, not academic meaning.
+    query=re.sub(r'\s*mcp\s*로\s*(?:조회|검색)해(?:줘|봐|주세요)[.!?？]*\s*$','',query,flags=re.I).strip()
+    value=intent(query)
+    if value:
+        topic,field=value
+        # Both select application instructions as evidence. Generated answer
+        # aliases keep the compound request separate from a place-only request.
+        if field=='application_location_and_procedure':field='application_procedure'
+        return hashlib.sha256(json.dumps([POLICY,(topic,field)],ensure_ascii=False).encode()).hexdigest()
     from .policy_fields import intent_key
     field=intent_key(query)
     return hashlib.sha256(json.dumps(['public-fields-v1',field],ensure_ascii=False).encode()).hexdigest() if field else None
@@ -93,6 +106,7 @@ DOCUMENTS={
 }
 SECTIONS={
  'application_procedure':('신청방법','신청절차'),
+ 'application_location_and_procedure':('신청방법','신청절차'),
  'application_eligibility':('신청자격','신청대상'),
  'eligibility':('일반조기졸업',),
  'application_term':('신청자격',), 'duration':('휴학기간',),
@@ -106,6 +120,7 @@ def source_item(query,chunks,semester=None,target=None):
     value=intent(query)
     if not value:return None
     topic,field=value
+    if topic.startswith('고려대학교:'):topic=topic.removeprefix('고려대학교:')
     if field not in SECTIONS:return None
     docs=DOCUMENTS.get(topic,())
     rows=[r for r in chunks if r.get('doc_id') in docs and
