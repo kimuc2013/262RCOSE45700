@@ -33,10 +33,9 @@ function MetricChart({spec,points,hours,bucket}:{spec:Spec;points:Point[];hours:
   function dot(key:string,isolated=false) {
     return (props:any) => {
       if(props.value==null||!Number.isFinite(props.cx)||!Number.isFinite(props.cy))return <g key={`${key}-${props.index}`}/>
-      // Summaries share an interval; small offsets reveal equal-valued series.
+      // Equal summaries retain their real interval position; the tooltip lists all series.
       if(isolated&&((props.index>0&&data[props.index-1]?.[key]!=null)||(props.index+1<data.length&&data[props.index+1]?.[key]!=null)))return <g key={`${key}-${props.index}`}/>
-      const offset=(visible.findIndex(s=>s.key===key)-(visible.length-1)/2)*4
-      return <circle key={`${key}-${props.index}`} data-metric-point={key} cx={props.cx+offset} cy={props.cy} r={3.3} fill={`var(--color-${key})`} stroke="var(--card)" strokeWidth={.8}/>
+      return <circle key={`${key}-${props.index}`} data-metric-point={key} cx={props.cx} cy={props.cy} r={3.3} fill={`var(--color-${key})`} stroke="var(--card)" strokeWidth={.8}/>
     }
   }
   function tooltip(props:any) {
