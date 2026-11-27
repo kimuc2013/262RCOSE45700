@@ -49,10 +49,10 @@ class RankedCache:
         with self._guard:
             lock, refs = self._flights.get(key, (threading.Lock(), 0))
             self._flights[key] = (lock, refs + 1)
-        shared = lock.locked()
-        acquired = False
+        acquired = lock.acquire(blocking=False)
+        shared = not acquired
         try:
-            acquired = lock.acquire(timeout=remaining_timeout(service.requests.limits.request_timeout))
+            if not acquired:acquired = lock.acquire(timeout=remaining_timeout(service.requests.limits.request_timeout))
             if not acquired:
                 raise Overloaded('Ranked cache lookup busy; retry later')
             checkpoint()

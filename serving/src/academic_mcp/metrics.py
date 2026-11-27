@@ -27,6 +27,38 @@ def fraction(n, d):
     return {'count': n, 'denominator': d, 'percent': round(n/d*100, 2) if d else None}
 
 
+def model_free(row):
+    """Unknown/late/shared model work cannot masquerade as a zero-call hit."""
+    if row.get('model_calls_complete') is not True or type(row.get('model_calls')) is not int:return None
+    if row.get('shared_model_work_unknown') is True:return None
+    if row.get('coalesced'):
+        if type(row.get('shared_model_calls')) is not int:return None
+        return row['model_calls']==0 and row['shared_model_calls']==0
+    return row['model_calls']==0
+
+
+def normal_responses(rows):
+    return [r for r in rows if (r.get('tool')=='answer_academic_question' and
+             r.get('status')=='answered' and r.get('can_answer') is True) or
+            (r.get('tool')!='answer_academic_question' and r.get('status') in ('found','evidence_available'))]
+
+
+def model_free_stats(rows):
+    successful=normal_responses(rows)
+    known=[r for r in successful if model_free(r) is not None]
+    zero=[r for r in successful if model_free(r) is True]
+    def reason(r):
+        if r.get('answer_cache_kind')=='verified_alias':return 'verified_alias_cache'
+        if r.get('cache_hit'):return 'response_cache'
+        if r.get('coalesced'):return 'shared_no_model'
+        if r.get('answer_mode') in ('source_item','source_items'):return 'direct_source'
+        if r.get('answer_mode')=='structured_calendar' or r.get('tool')=='get_academic_calendar':return 'structured_calendar'
+        return 'other_no_model'
+    return {'model_free_response_rate':fraction(len(zero),len(successful)),
+            'model_free_measurement_coverage':fraction(len(known),len(successful)),
+            'model_free_reasons':dict(Counter(reason(r) for r in zero))}
+
+
 def aggregate(events):
     requests = [r for r in events if r['kind'] == 'request']
     apis = [r for r in events if r['kind'] == 'api']
@@ -37,7 +69,7 @@ def aggregate(events):
         shared = sum(r.get('coalesced') is True for r in rows)
         reused = sum(r.get('cache_hit') is True or r.get('coalesced') is True for r in rows)
         answered = [r for r in rows if r['status'] == 'answered' and r.get('can_answer') is True]
-        tools[tool] = {'requests': len(rows), 'statuses': dict(Counter(r['status'] for r in rows)),
+        tools[tool] = {**model_free_stats(rows), 'requests': len(rows), 'statuses': dict(Counter(r['status'] for r in rows)),
             'cache_hit_rate': fraction(hits, len(rows)), 'coalesced': shared,
             'cache_or_shared_rate': fraction(reused, len(rows)),
             'effective_cache_hit_rate': fraction(sum(r.get('cache_hit') is True or
@@ -86,6 +118,7 @@ def time_series(events, start, end, buckets=60):
         tokens = [r['total_tokens'] for r in gen if type(r.get('total_tokens')) is int]
         points.append({'ts': start+i*step, 'requests': len(req),
             'failures': sum(r['status'] in ('error', 'cancelled', 'answer_timeout') for r in req),
+            'model_free_response_rate':model_free_stats([r for r in req if r['tool']=='answer_academic_question'])['model_free_response_rate']['percent'],
             'cache_rate': fraction(sum(r.get('cache_hit') is True for r in cacheable), len(cacheable))['percent'],
             'effective_cache_rate': fraction(sum(r.get('cache_hit') is True or
                 r.get('retrieval_cache_hit') is True for r in cacheable), len(cacheable))['percent'],
@@ -120,6 +153,7 @@ def read_report(path, hours=24, now=None, *, include_series=False):
         'groups': groups,
         'method': {'latency': 'server tool execution only; excludes client network/init/rewrite',
             'cache_rate_denominator': 'all calls of the tool, including errors/timeouts',
+            'model_free_response_rate':'zero physical model work / normal responses; answer tool requires answered and can_answer=true; errors, timeouts and refusals excluded; unknown/shared nonzero cannot count as zero',
             'tokens': 'provider-reported observed usage only; missing is unknown, not zero',
             'api_attempts': 'physical online HTTP posts, including retries/failures/late work; not per-caller sum',
             'traffic': 'live means unmarked; experiment is a self-reported client header, not authentication',
@@ -152,7 +186,7 @@ function tokens(r){return num(r.reported_sum)+' ('+r.reported_calls+'/'+r.all_ca
 function draw(){const d=data.groups[$('group').value],a=d.tools.answer_academic_question,s=d.tools.search_academic_info,g=d.api_stages.generation;
 $('cards').replaceChildren(card('전체 도구 호출',num(d.requests),'선택 트래픽, 계측 기간 내'),card('2초 이내 answered 비율',a?rate(a.answered_within_2s):'—','2초 이내 answered / 답변 도구 전체 요청'),card('완료 답변 p95',a?ms(a.answered_latency.p95_ms):'—','answered 상태의 서버 실행 시간'),card('실제 모델 API 시도',num(d.physical_api_attempts),'검색과 생성, 실패 및 복구 포함'));
 $('cache').replaceChildren();for(const [name,t] of [['완성 답변 캐시',a],['검색 도구 캐시',s]]){const c=card(name,t?rate(t.cache_hit_rate):'—',t?t.cache_hit_rate.count+'/'+t.requests+'회, 합쳐진 요청 '+t.coalesced+'회'+(name==='검색 도구 캐시'?' (직접 검색 호출)':''):'아직 관측 없음');const b=node('div',null,'bar'),f=node('div',null,'fill');f.style.width=(t?.cache_hit_rate.percent||0)+'%';b.append(f);c.append(b);$('cache').append(c)}
-$('cache').append(card('보고된 생성 입력 토큰',g?num(g.prompt_tokens.reported_sum):'—',g?'usage 제공 '+g.prompt_tokens.reported_calls+'/'+g.attempts+'회':'생성 API 관측 없음'),card('토큰 절감률','기준선 필요','실제 반복 실험과 외부 LLM 계측을 분리'));
+$('cache').append(card('모델 무호출 응답률',a?.model_free_response_rate?rate(a.model_free_response_rate):'—',a?.model_free_response_rate?a.model_free_response_rate.count+'/'+a.model_free_response_rate.denominator+' 완료 답변, 계측 '+rate(a.model_free_measurement_coverage):'아직 완료 답변 없음'),card('보고된 생성 입력 토큰',g?num(g.prompt_tokens.reported_sum):'—',g?'usage 제공 '+g.prompt_tokens.reported_calls+'/'+g.attempts+'회':'생성 API 관측 없음'),card('토큰 절감률','기준선 필요','실제 반복 실험과 외부 LLM 계측을 분리'));
 table('tools',['도구','호출','상태 분포','전체 p95','답변 p95','캐시 p50','캐시·공유 합계'],Object.entries(d.tools).map(([k,t])=>[k,num(t.requests),Object.entries(t.statuses).map(([s,n])=>s+': '+n).join(', '),ms(t.all_latency.p95_ms),ms(t.answered_latency.p95_ms),ms(t.cache_latency.p50_ms),rate(t.cache_or_shared_rate)]));
 table('api',['단계','물리 시도','오류 HTTP / 전송','p50','입력 토큰','출력 토큰','총 토큰','공급자 캐시 토큰'],Object.entries(d.api_stages).map(([k,t])=>[k,num(t.attempts),t.http_errors+' / '+t.transport_errors,ms(t.latency.p50_ms),tokens(t.prompt_tokens),tokens(t.completion_tokens),tokens(t.total_tokens),tokens(t.cached_prompt_tokens)]));
 }

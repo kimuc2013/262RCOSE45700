@@ -2,13 +2,16 @@
 import re
 from .direct_answer import _named_fields
 from .search import normalize
+from .answer_aliases import source_item
 
 FIELDS={'정의','개념','신청자격','신청방법','신청절차','증빙서류','휴학기간','수수료'}
-POLICY='exact-public-fields-v2'
+POLICY='exact-public-fields-v3'
 
 
 def lookup(query,chunks,semester=None,target=None):
     if semester is not None or target is not None:return None
+    structured=source_item(query,chunks,semester,target)
+    if structured is not None:return structured
     # The combined-field parser full-matches the whole question and requires
     # unique fields in one document. It never infers an individual decision.
     combined=_named_fields(query,chunks)

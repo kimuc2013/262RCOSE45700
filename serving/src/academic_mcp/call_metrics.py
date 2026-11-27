@@ -92,9 +92,12 @@ def response_metrics(counts, elapsed_ms, *, shared=False, complete=True, observe
               for stage in STAGES}
     total = sum(values.values()) if complete or observed else None
     own = {key: 0 if shared else value for key, value in values.items()}
+    uncertain_shared=bool(counts.get('retrieval_coalesced') or counts.get('embedding_coalesced') or counts.get('shared_model_work_unknown')) and total==0
     return {**own, 'model_calls': 0 if shared else total,
             'shared_model_calls': total, 'shared_model_calls_by_stage': values,
             'model_calls_complete': complete, 'model_calls_observed': complete or observed, 'model_calls_scope': 'server_http_attempts',
+            'model_free_response': total==0 if complete and not uncertain_shared else None,
+            'shared_model_work_unknown':uncertain_shared,
             'metrics_schema_version': 2, **release_metrics(),
             'stage_elapsed_ms': progress.get().timings() if progress.get() is not None else {},
             'stage_timings_complete':complete,
