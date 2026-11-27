@@ -427,6 +427,7 @@ def test_generation_preconnect_is_bounded_and_never_blocks_an_answer(service,mon
         return httpx.Response(200,json={'model':MODEL,'choices':[{'finish_reason':'stop',
             'message':{'content':json.dumps({'answer':'공식 조건입니다.','can_answer':True,'sources':[1]})}}]})
     answer=generator(service,handler,preconnect=True)
+    assert answer._warmup_last == float('-inf')  # Also cold on a newly booted host.
     async def run():
         result=await answer.answer('이중전공 제도를 설명해줘')
         assert result['status']=='answered' and not release.is_set()

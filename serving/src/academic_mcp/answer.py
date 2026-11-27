@@ -55,7 +55,7 @@ class FinalAnswers:
         if preconnect is not None and type(preconnect) is not bool:raise ValueError('Invalid preconnect setting')
         self.preconnect=(transport is None) if preconnect is None else bool(preconnect)
         self._warmup_lock=threading.Lock()
-        self._warmup_last=0.0
+        self._warmup_last=float('-inf')
         self._warmup_future=None
         self._warmup_pool=ThreadPoolExecutor(max_workers=1,thread_name_prefix='answer-preconnect') if self.preconnect else None
         self.policy=hashlib.sha256(json.dumps([base_url,model,PROMPT,max_tokens,reasoning_effort,'strict-schema-v2',REPAIR,DIRECT_POLICY,LITERAL_POLICY,ALIAS_POLICY],ensure_ascii=False).encode()).hexdigest()
