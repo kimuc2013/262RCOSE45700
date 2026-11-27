@@ -439,3 +439,27 @@ def test_generation_preconnect_is_bounded_and_never_blocks_an_answer(service,mon
         assert result['metrics']['generation_calls']==1 and result['metrics']['model_calls']==1
     try:asyncio.run(run())
     finally:release.set();answer.close()
+
+
+def test_broken_generation_connection_allows_bounded_recovery(service,monkeypatch):
+    monkeypatch.setattr('academic_mcp.answer.literal_lookup',lambda *a,**k:None)
+    monkeypatch.setattr('academic_mcp.answer.direct_answer',lambda *a,**k:None)
+    seen=[]
+    def handler(request):
+        seen.append(request.method)
+        if request.method=='GET':return httpx.Response(200,json={'data':[]})
+        raise httpx.ReadTimeout('broken response',request=request)
+    answer=generator(service,handler,preconnect=True)
+    # A previously warm connection can fail before the normal 45 s cooldown.
+    answer._warmup_last=time.monotonic()
+    async def run():
+        result=await answer.answer('이중전공 제도를 설명해줘')
+        assert result['status']=='answer_timeout' and answer._warmup_recovery
+        answer.prepare_connection()
+        await until(lambda:answer._warmup_future is not None and answer._warmup_future.done())
+        assert seen.count('GET')==1 and not answer._warmup_recovery
+        answer._warmup_recovery=True
+        answer.prepare_connection()
+        assert seen.count('GET')==1  # Recovery never floods a failing endpoint.
+    try:asyncio.run(run())
+    finally:answer.close()
