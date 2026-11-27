@@ -16,7 +16,13 @@ def polite_query(query):
 
 # Whole-question grammars, with every unmatched topic/condition retained in the
 # topic slot. A partial keyword match is never an equivalence proof.
+APPLICATION_PLACE=r'(?:어느(?:곳|경로|채널|사이트|기관)(?:에서|으로|로|에)|어디(?:에서|서|로|에))'
+APPLICATION_ACTION=r'(?:하면되나요|해야하나요|하나요|하면될까요|하면돼|해야해|해요|해)'
+
 GRAMMARS=(
+ ('application_procedure',rf'(?P<topic>.+?)하려면{APPLICATION_PLACE}신청{APPLICATION_ACTION}'),
+ ('application_procedure',rf'(?P<topic>.+?)신청(?:은|는|을|를)?{APPLICATION_PLACE}{APPLICATION_ACTION}'),
+ ('application_procedure',rf'(?P<topic>.+?)(?:은|는)?{APPLICATION_PLACE}신청{APPLICATION_ACTION}'),
  ('application_location_and_procedure',r'(?P<topic>.+?)신청(?:은|는)?(?:어디서|어디에서)(?:어떻게해|어떻게하나요|어떻게하면되나요)'),
  ('application_procedure',r'(?P<topic>.+?)신청(?:은|는)?(?:어디서해|어디에서해)'),
  ('application_procedure',r'(?P<topic>.+?)어디서신청하나요'),
