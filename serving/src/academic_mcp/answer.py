@@ -5,9 +5,14 @@ import json
 import math
 import re
 import time
+import sqlite3
 import uuid
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 
 import httpx
+from .http_timing import post as traced_post
 from .call_metrics import attempts, since, record_attempt, response_metrics, CallProgress, progress, timed_stage
 from .direct_answer import direct_answer, POLICY as DIRECT_POLICY
 from .literal_route import lookup as literal_lookup, POLICY as LITERAL_POLICY
@@ -32,7 +37,7 @@ REPAIR = '직전 응답은 형식 검증에 실패했습니다. 분석이나 ana
 
 class FinalAnswers:
     def __init__(self, service, *, base_url, model, api_key='', budget=1.85,
-                 max_tokens=512, reasoning_effort=None, transport=None):
+                 max_tokens=512, reasoning_effort=None, transport=None, preconnect=None):
         if not base_url or not model:raise ValueError('Answer API and model required')
         if isinstance(budget,bool) or not math.isfinite(budget) or not 0 < budget <= 2:
             raise ValueError('Answer budget must be within two seconds')
@@ -47,9 +52,32 @@ class FinalAnswers:
         if service.telemetry is not None:
             from .telemetry import ObservedClient
             self.client=ObservedClient(self.client,service.telemetry,'generation')
+        if preconnect is not None and type(preconnect) is not bool:raise ValueError('Invalid preconnect setting')
+        self.preconnect=(transport is None) if preconnect is None else bool(preconnect)
+        self._warmup_lock=threading.Lock()
+        self._warmup_last=0.0
+        self._warmup_future=None
+        self._warmup_pool=ThreadPoolExecutor(max_workers=1,thread_name_prefix='answer-preconnect') if self.preconnect else None
         self.policy=hashlib.sha256(json.dumps([base_url,model,PROMPT,max_tokens,reasoning_effort,'strict-schema-v2',REPAIR,DIRECT_POLICY,LITERAL_POLICY,ALIAS_POLICY],ensure_ascii=False).encode()).hexdigest()
 
-    def close(self):self.client.close()
+    def close(self):
+        if self._warmup_pool is not None:self._warmup_pool.shutdown(wait=True,cancel_futures=True)
+        self.client.close()
+
+    def prepare_connection(self):
+        # One bounded read-only catalog request on cold/idle generation clients.
+        # It overlaps retrieval; it is never awaited on the answer critical path.
+        if self._warmup_pool is None:return
+        with self._warmup_lock:
+            now=time.monotonic()
+            if now-self._warmup_last<45 or (self._warmup_future is not None and not self._warmup_future.done()):return
+            self._warmup_last=now
+            def warm():
+                try:
+                    with timed_stage('connection_warmup'):self.client.get('models',timeout=.6)
+                except httpx.HTTPError:pass
+            self._warmup_future=self._warmup_pool.submit(copy_context().run,warm)
+
 
     def key(self,query,history,top_k,semester,target):
         return 'answer:'+self.policy+':'+self.service.cache_key(polite_query(query),history,top_k,semester,target)
@@ -125,10 +153,12 @@ class FinalAnswers:
             if time.monotonic()>=deadline:raise DeadlineExceeded('Answer deadline exhausted')
             counts = hit.pop('_model_counts', {})
             cache_kind=hit.pop('_answer_cache_kind',None)
+            cache_write_status=hit.pop('_cache_write_status',None)
             cache_reason=hit.pop('_semantic_cache_reason',None)
             embedding_hit=hit.pop('_embedding_cache_hit',None)
             hit['request_id']=uuid.uuid4().hex
             hit['metrics']={'cache_hit':cached,'coalesced':coalesced,'answer_cache_kind':cache_kind,
+                'cache_write_status':'hit' if cached else cache_write_status,
                 'retrieval_cache_hit':None if cached or coalesced else hit.pop('_retrieval_cache_hit',None),
                 'semantic_cache_hit':False if cached or coalesced else hit.pop('_semantic_cache_hit',False),
                 'semantic_cache_reason':'response_cache_hit' if cached else 'coalesced' if coalesced else cache_reason,
@@ -177,6 +207,7 @@ class FinalAnswers:
                     evidence=[c for c in chunks if c['id'] in direct['chunk_ids']],
                     retrieval_mode='exact_public_fields',metrics={})
             else:
+                self.prepare_connection()
                 result=self.service.search(query,history,top_k,semester,target)
         if tracker is not None:tracker.phase('answer_routing')
         if result['revision']!=revision:raise DataChanged('Source changed before generation')
@@ -213,9 +244,10 @@ class FinalAnswers:
                 if self.reasoning_effort:payload['reasoning_effort']=self.reasoning_effort
                 for attempt in range(2):
                     timeout=remaining_timeout(self.budget)
+                    with self._warmup_lock:self._warmup_last=time.monotonic()
                     record_attempt('generation')
                     with timed_stage('generation'):
-                        response=self.client.post('chat/completions',json=payload,timeout=timeout)
+                        response=traced_post(self.client,'generation','chat/completions',json=payload,timeout=timeout)
                     response.raise_for_status();checkpoint()
                     data=response.json()
                     if data.get('model')!=self.model:raise ValueError('Unexpected answer model')
@@ -241,24 +273,33 @@ class FinalAnswers:
         output['_retrieval_cache_hit']=bool(result.get('cache_hit') or
             result.get('metrics',{}).get('retrieval_cache_hit'))
         checkpoint()
-        with timed_stage('cache_write'):
-            with self.service.store.connect(timeout=1) as db:
-                db.execute('BEGIN IMMEDIATE')
-                current=db.execute("SELECT value FROM meta WHERE key='revision'").fetchone()
-                if (current[0] if current else 'empty')!=revision:raise DataChanged('Source changed during generation')
-                checkpoint()
-                db.execute('DELETE FROM cache WHERE expires<=?',(self.service.clock(),))
-                if db.execute('SELECT count(*) FROM cache').fetchone()[0]>=999:
-                    db.execute('DELETE FROM cache WHERE key IN (SELECT key FROM cache ORDER BY expires LIMIT 100)')
-                expires=self.service.clock()+self.service.cache_ttl
-                db.execute('INSERT OR REPLACE INTO cache VALUES(?,?,?,?)',
-                    (key,revision,expires,json.dumps({k:v for k,v in output.items() if k != '_model_counts'},ensure_ascii=False)))
-                if alias_key is not None and output.get('status')=='answered' and output.get('can_answer') is True:
-                    # One direct pointer only; its lifetime never outlives the
-                    # completed source answer. Reuse never refreshes either TTL.
+        left=remaining_timeout(self.budget)
+        if left<.03:
+            output['_cache_write_status']='budget_skipped'
+            return output
+        output['_cache_write_status']='stored'
+        try:
+            with timed_stage('cache_write'):
+                with self.service.store.connect(timeout=min(.01,left-.025)) as db:
+                    db.execute('BEGIN IMMEDIATE')
+                    current=db.execute("SELECT value FROM meta WHERE key='revision'").fetchone()
+                    if (current[0] if current else 'empty')!=revision:raise DataChanged('Source changed during generation')
+                    checkpoint()
+                    db.execute('DELETE FROM cache WHERE expires<=?',(self.service.clock(),))
+                    if db.execute('SELECT count(*) FROM cache').fetchone()[0]>=999:
+                        db.execute('DELETE FROM cache WHERE key IN (SELECT key FROM cache ORDER BY expires LIMIT 100)')
+                    expires=self.service.clock()+self.service.cache_ttl
                     db.execute('INSERT OR REPLACE INTO cache VALUES(?,?,?,?)',
-                        (alias_key,revision,expires,
-                         json.dumps({'target':key,'verification':ALIAS_POLICY})))
+                        (key,revision,expires,json.dumps({k:v for k,v in output.items() if k not in ('_model_counts','_cache_write_status')},ensure_ascii=False)))
+                    if alias_key is not None and output.get('status')=='answered' and output.get('can_answer') is True:
+                        # One direct pointer only; its lifetime never outlives the
+                        # completed source answer. Reuse never refreshes either TTL.
+                        db.execute('INSERT OR REPLACE INTO cache VALUES(?,?,?,?)',
+                            (alias_key,revision,expires,
+                             json.dumps({'target':key,'verification':ALIAS_POLICY})))
+        except sqlite3.OperationalError as exc:
+            if (getattr(exc,'sqlite_errorcode',0)&255) not in (sqlite3.SQLITE_BUSY,sqlite3.SQLITE_LOCKED):raise
+            output['_cache_write_status']='busy_skipped'
         return output
 
     def parse(self,data,source_count):

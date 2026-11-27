@@ -43,3 +43,10 @@ def test_reason_block_keeps_all_conditions_and_never_crosses_list_boundary():
     for q in ['신입생 창업하려고 휴학하려면 어떤 서류가 필요해?','창업휴학 첫 학기에 가능해?','2027년 창업휴학 증빙서류 알려줘']:
         assert lookup(q,[row]) is None
     assert lookup('창업하려고 휴학하려면 어떤 서류가 필요해?',[row,dict(row,id='other')]) is None
+
+
+def test_generic_illness_never_uses_first_term_only_leave_documents():
+    from academic_mcp.literal_route import lookup
+    row={'id':'ill','doc_id':'leave','doc_title':'학사 > 휴학 > 특별휴학','section':'증빙서류',
+         'url':'https://official.test/leave','text':'- 신입학, 편입학 및 재입학생의 첫학기 질병휴학\n  - 4주 입원진단서'}
+    assert lookup('질병휴학 증빙서류 알려줘',[row]) is None

@@ -6,6 +6,7 @@ import httpx
 
 from .runtime import checkpoint, remaining_timeout
 from .call_metrics import record_attempt, timed_stage
+from .http_timing import post as traced_post
 
 physical_attempts = ContextVar('retrieval_http_attempts', default=0)
 
@@ -37,7 +38,7 @@ class ReliableModelClient:
                 stage='embedding' if 'input' in body else 'rerank'
                 record_attempt(stage)
                 with timed_stage(stage):
-                    return self.client.post(*args, **kwargs)
+                    return traced_post(self.client,stage,*args,**kwargs)
             except (httpx.ReadError, httpx.RemoteProtocolError,
                     httpx.ConnectError, httpx.ConnectTimeout):
                 checkpoint()

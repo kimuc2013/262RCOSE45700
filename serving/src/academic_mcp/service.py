@@ -1,4 +1,5 @@
 import hashlib
+import httpx
 import json
 import logging
 import os
@@ -469,9 +470,19 @@ def build_service():
     from .retrieval import Retriever
     from .telemetry import Telemetry
     metrics_path = os.getenv('SERVING_METRICS_DB')
+    retriever=Retriever.from_env(store) if mode=='retrieval' else None
+    if retriever is not None:
+        original=retriever._client
+        try:
+            # Own the serving pool without replacing the model module. A normal
+            # Client preserves environment proxy/TLS handling; a custom transport
+            # would silently disable environment proxy selection in httpx.
+            retriever._client=httpx.Client(headers=original.headers,
+                limits=httpx.Limits(max_connections=8,max_keepalive_connections=8,keepalive_expiry=60))
+        finally:original.close()
     return AcademicService(store,
                            RemoteModels() if mode == 'remote' else None,
-                           retriever=Retriever.from_env(store) if mode == 'retrieval' else None,
+                           retriever=retriever,
                            answer_context=os.getenv('SERVING_ANSWER_CONTEXT', 'false').lower() == 'true',
                            telemetry=Telemetry(metrics_path) if metrics_path else None,
                            ranked_cache_ttl=float(os.getenv('SERVING_RANKED_CACHE_TTL', '1800')),

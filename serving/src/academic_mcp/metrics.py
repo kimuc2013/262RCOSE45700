@@ -6,6 +6,7 @@ import math
 from pathlib import Path
 import sqlite3
 import time
+from .release import release_metrics
 
 
 def percentile(values, p):
@@ -147,7 +148,7 @@ def read_report(path, hours=24, now=None, *, include_series=False):
         groups[group] = aggregate(selected)
         if include_series:
             groups[group]['series'] = time_series(selected, start, now)
-    return {'window': {'start': start, 'end': now, 'hours': hours,
+    return {'server':release_metrics(),'window': {'start': start, 'end': now, 'hours': hours,
             'first_observed_event': min((e['ts'] for e in events), default=None)},
         'health_retained_runs': {'dropped_events': health[0] or 0, 'write_errors': health[1] or 0},
         'groups': groups,
