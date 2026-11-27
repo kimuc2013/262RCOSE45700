@@ -157,3 +157,34 @@ def test_institution_normalization_never_removes_foreign_or_population_scope():
               '고려대학교는 2027학년도 복학 신청 어디서 어떻게 해?',
               '고려대학교는 복학 신청 어디서 어떻게 해? 필요한 서류도 알려줘']:
         assert retrieval_proof(seed)!=retrieval_proof(q)
+
+
+def test_application_channel_grammar_composes_places_and_actions_without_new_calls(retrieval_setup):
+    from itertools import product
+    from academic_mcp.answer_aliases import retrieval_proof
+    s,fake,now,day=ready(retrieval_setup)
+    seed='고려대학교는 복학 신청 어디서 어떻게 해?'
+    first=s.search(seed,top_k=6)
+    places=['어느 곳에서','어느 곳으로','어디로','어디에서','어느 경로로','어느 사이트에서']
+    actions=['하면 되나요','해야 하나요','하나요','하면 될까요']
+    for place,action in product(places,actions):
+        q=f'고려대학교에서 복학하려면 {place} 신청{action}?'
+        assert retrieval_proof(q)==retrieval_proof(seed),q
+        r=s.search(q,top_k=6)
+        assert r['metrics']['retrieval_cache_hit'] and r['metrics']['model_calls']==0,q
+        assert r['query']==q
+    assert len(fake.requests)==2
+    for q in ['고려대학교 복학 신청은 어디로 하면 되나요?',
+              '고려대학교 복학은 어느 곳에 신청해야 하나요?']:
+        assert retrieval_proof(q)==retrieval_proof(seed)
+
+
+def test_application_channel_does_not_erase_additional_demands_or_scope():
+    from academic_mcp.answer_aliases import retrieval_proof
+    seed='고려대학교에서 복학하려면 어느 곳으로 신청하면 되나요?'
+    for q in ['고려대학교에서 군제대 복학하려면 어느 곳으로 신청하면 되나요?',
+              '고려대학교에서 대학원 복학하려면 어느 곳으로 신청하면 되나요?',
+              '연세대학교에서 복학하려면 어느 곳으로 신청하면 되나요?',
+              '고려대학교에서 2027년 복학하려면 어느 곳으로 신청하면 되나요?',
+              '고려대학교에서 복학하려면 어느 곳으로 신청하면 되나요? 비용도 알려줘']:
+        assert retrieval_proof(q)!=retrieval_proof(seed)
