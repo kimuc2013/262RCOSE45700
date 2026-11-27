@@ -121,3 +121,9 @@ def test_public_field_paraphrases_share_evidence_but_not_generated_answer_proof(
     b=s.search(other)
     assert b['metrics']['retrieval_cache_kind']=='verified_intent' and b['metrics']['model_calls']==0
     assert not date_sensitive(q) and not date_sensitive(other)
+
+
+def test_relative_date_detection_matches_unicode_cache_identity():
+    import unicodedata
+    for q in ['오늘 이중전공 신청 가능해?','이중전공 신청 기간 알려줘']:
+        assert date_sensitive(q) and date_sensitive(unicodedata.normalize('NFD',q))

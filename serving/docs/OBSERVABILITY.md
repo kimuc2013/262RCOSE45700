@@ -140,4 +140,4 @@ owner 지표의 최상위 `server`는 현재 보고서를 만든 서버의 배�
 
 `retrieval_cache_kind=verified_intent`, `semantic_cache_reason=verified_intent_cache_hit`는 전체 질문 문법으로 동일 의도와 주제 슬롯을 검증해 검색 결과를 공유한 경우다. 새 임베딩 없이 재사용하며 검색 점수는 `cached_` 출처로 표시한다. 문법을 벗어난 질문은 기존 검색 또는 보수적인 의미 캐시로 넘어간다. 모델의 점수 임계값이 설정돼 있으면 검증 별칭 경로도 사용하지 않는다. 숫자, 학교와 학과, 부정, 대상 조건을 임의로 제거하거나 유사도 임계값을 낮추지 않는다.
 
-`cache_hit`는 완성된 도구 응답 캐시다. 새 질문 표현에서 `cache_hit=false`여도 `retrieval_cache_hit=true`, `model_calls=0`이면 검색 결과를 재사용한 모델 무호출이다. `cache_retention_policy=revision-static-v1`로 현재 정책을 확인한다. 질문 원문은 telemetry에 추가하지 않는다.
+`cache_hit`는 완성된 도구 응답 캐시다. 새 질문 표현에서 `cache_hit=false`여도 `retrieval_cache_hit=true`, `model_calls=0`이면 검색 결과를 재사용한 모델 무호출이다. `cache_retention_policy=revision-static-v2`로 현재 정책을 확인한다. 질문 원문은 telemetry에 추가하지 않는다.
