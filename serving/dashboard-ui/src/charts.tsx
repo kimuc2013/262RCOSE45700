@@ -41,7 +41,7 @@ function MetricChart({spec,points,hours}:{spec:Spec;points:Point[];hours:string}
   return <Card data-chart-kind={spec.kind} data-chart-library="shadcn-recharts" data-featured={featured} className={featured?"pt-0":""}>
     <CardHeader className={featured?"flex items-center gap-2 space-y-0 border-b py-5 sm:flex-row":""}>
       <div className="grid flex-1 gap-1"><CardTitle>{spec.title}</CardTitle><CardDescription>{spec.description}</CardDescription></div>
-      {featured&&<Select value={hours} onValueChange={setRange}><SelectTrigger className="w-[160px] rounded-lg sm:ml-auto" aria-label="차트 조회 기간"><SelectValue/></SelectTrigger><SelectContent className="rounded-xl"><SelectItem value=".25">최근 15분</SelectItem><SelectItem value="1">최근 1시간</SelectItem><SelectItem value="24">최근 24시간</SelectItem></SelectContent></Select>}
+      {featured&&<Select value={hours} onValueChange={setRange}><SelectTrigger className="w-[160px] rounded-lg sm:ml-auto" aria-label="차트 조회 기간"><SelectValue/></SelectTrigger><SelectContent className="rounded-xl"><SelectItem value="0.25">최근 15분</SelectItem><SelectItem value="1">최근 1시간</SelectItem><SelectItem value="24">최근 24시간</SelectItem></SelectContent></Select>}
     </CardHeader>
     <CardContent className={featured?"px-2 pt-4 sm:px-6 sm:pt-6":""}>
       {!points.length?<div className="chart-empty">아직 관측된 데이터가 없습니다</div>:<ChartContainer id={`ops-${spec.id}`} config={config} className="aspect-auto h-[250px] w-full" aria-label={spec.title}>
