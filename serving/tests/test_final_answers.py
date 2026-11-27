@@ -385,3 +385,57 @@ def test_exact_field_route_preserves_old_source_warning(service):
         assert result['freshness_warning'] and result['metrics']['model_calls']==0
     try:asyncio.run(run())
     finally:answer.close()
+
+
+def test_completed_answer_skips_cache_when_commit_allowance_is_exhausted(service,monkeypatch):
+    monkeypatch.setattr('academic_mcp.answer.remaining_timeout',lambda configured:.02)
+    answer=generator(service)
+    async def run():
+        result=await answer.answer('이중전공 제도를 설명해줘')
+        assert result['status']=='answered' and result['can_answer']
+        assert result['metrics']['cache_write_status']=='budget_skipped'
+        with service.store.connect() as db:
+            assert db.execute("SELECT count(*) FROM cache WHERE key LIKE 'answer:%'").fetchone()[0]==0
+    try:asyncio.run(run())
+    finally:answer.close()
+
+
+def test_completed_answer_survives_optional_cache_write_lock(service):
+    held=service.store.connect();db=held.__enter__();db.execute('BEGIN IMMEDIATE')
+    answer=generator(service)
+    # Search's own cache write is independent of this test: provide its already
+    # completed evidence so only final-answer publication contends with the lock.
+    revision,chunks,_=service.store.snapshot()
+    service.search=lambda *a,**k:service.response(revision,'evidence_available',evidence=chunks[:1])
+    async def run():
+        result=await answer.answer('이중전공 제도를 설명해줘')
+        assert result['status']=='answered'
+        assert result['metrics']['cache_write_status']=='busy_skipped'
+        assert result['metrics']['server_elapsed_ms']<300
+    try:asyncio.run(run())
+    finally:held.__exit__(None,None,None);answer.close()
+
+
+def test_generation_preconnect_is_bounded_and_never_blocks_an_answer(service,monkeypatch):
+    warm_started,release=threading.Event(),threading.Event();seen=[]
+    monkeypatch.setattr('academic_mcp.answer.literal_lookup',lambda *a,**k:None)
+    monkeypatch.setattr('academic_mcp.answer.direct_answer',lambda *a,**k:None)
+    def handler(request):
+        seen.append(request.method)
+        if request.method=='GET':
+            warm_started.set();release.wait(1);return httpx.Response(200,json={'data':[]})
+        return httpx.Response(200,json={'model':MODEL,'choices':[{'finish_reason':'stop',
+            'message':{'content':json.dumps({'answer':'공식 조건입니다.','can_answer':True,'sources':[1]})}}]})
+    answer=generator(service,handler,preconnect=True)
+    assert answer._warmup_last == float('-inf')  # Also cold on a newly booted host.
+    async def run():
+        result=await answer.answer('이중전공 제도를 설명해줘')
+        assert result['status']=='answered' and not release.is_set()
+        assert result['metrics']['model_calls_complete'] is True
+        await until(warm_started.is_set)
+        result2=await answer.answer('이중전공 정의를 설명해줘')
+        assert result2['status']=='answered'
+        assert seen.count('GET')==1 and seen.count('POST')==2
+        assert result['metrics']['generation_calls']==1 and result['metrics']['model_calls']==1
+    try:asyncio.run(run())
+    finally:release.set();answer.close()

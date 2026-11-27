@@ -66,3 +66,13 @@ ANSWER_MAX_TOKENS=512
 같은 의도 문법으로 공식 항목 직접 조회도 확대했다. 원문에 있는 자격, 신청 경로, 휴학기간, 학점 제한, 재수강 성적, 졸업요건을 문서/항목이 유일할 때만 전체 인용한다. 문서 ID가 없거나 바뀌거나 항목이 크거나 모호하면 기존 검색으로 넘어간다. 수치/규정 값은 코드에 넣지 않으며 원문에 없는 개인 결론은 만들지 않는다.
 
 `metrics.model_free_response`는 공유 작업을 포함한 실제 모델 HTTP 시도가 0이고 작업 계수가 완료됐을 때만 true다. shared caller의 자기 호출만 0인 것을 무호출로 표시하지 않는다. timeout은 null이다. `answer_cache_kind=verified_alias`로 최종 답변 별칭 적중을 구분한다.
+
+## 시간초과 원인별 대응 (2026-11-27)
+
+모델 요청의 `http_elapsed_ms`는 connect_tcp/tls/send_headers/send_body/wait_headers/read_body를 분리한다. `wait_headers`에는 원격 처리와 네트워크 시간이 함께 들어 있으므로 순수 NPU 추론 시간으로 부르지 않는다. `http_connections`는 새 TCP 연결 시도 수, `http_bytes`는 POST 송수신 길이다. trace의 URL/헤더/본문은 저장하지 않는다. 성공·timeout 응답 모두 요청 시점 스냅샷이며 공유 caller의 모델 통신을 자기 통신으로 복제하지 않는다.
+
+HTTPX의 단계별 timeout에는 매 HTTP 단계 시작 시 남은 전체 Budget을 다시 적용한다. 연결/업로드가 쓴 시간을 read timeout에서 빼며, 취소된 caller의 후속 단계를 중단한다. 모델 모듈을 수정하지 않고 serving의 검색 클라이언트 풀을60초/최대8개로 관리한다. 기존 환경 프록시/TLS 처리는 유지한다. 생성 클라이언트가45초 이상 유휴였을 때에는 검색 중 한 번의 GET models를 겹쳐 연결을 준비한다. 대기하지 않고, 최대 worker1개/동시1회/45초 cooldown, 정상 생성 중에는 추가 요청을 보내지 않는다. 이 읽기 전용 카탈로그 요청은 임베딩/리랭킹/생성 추론 POST가 아니며 model_calls에 넣지 않는다. `connection_warmup`은 겹치는 보조 구간이며 진행 중이면 stage_timings_complete=false/connection_warmup_pending=true다.
+
+유일한 공식 정책 항목/표는 `policy_fields.py`에서 직접 조회한다. 표의 성적/학점 키를 정확히 확인하고, 과거 학기 길이를 현재 운영 기간으로 오인하지 않는다. 조건·예외·시행일·필요서류가 나뉘면 필수 항목을 모두 묶고 하나라도 빠지면 기존 검색으로 넘어간다. 일반 질병휴학에 첫학기 전용 서류를 적용하지 않는다. 수치/규정은 코드가 아닌 현재 snapshot에서만 가져온다. 이 제한된 문법 밖의 질문은 기존 모델 검색과 생성에 맡긴다.
+
+완성·검증된 답변의 최종 캐시 저장은 선택 사항이다. 남은 시간이30ms 미만이거나 쓰기 잠금이10ms 내에 풀리지 않으면 저장을 건너뛴다. 원본 revision의 마지막 검증은 계속 수행하며, 늦은 응답이나 바뀐 데이터는 성공으로 처리하지 않는다. `cache_write_status`는 stored/hit/budget_skipped/busy_skipped다. 필수 데이터 읽기나 모델 실패를 캐시 문제로 숨기지 않는다. 상위 전체1.85초 예산과 외부2초 목표는 유지한다.

@@ -4,7 +4,7 @@ import json
 import re
 from .cache import ranked_query
 
-POLICY='verified-answer-intents-v2'
+POLICY='verified-answer-intents-v3'
 
 
 def polite_query(query):
@@ -27,7 +27,7 @@ GRAMMARS=(
  ('application_eligibility',r'(?P<topic>.+?)신청(?:자격|자격조건|조건|요건)(?:을|를|은|는|이|가)?(?:알려줘|설명해줘|무엇)?'),
  ('eligibility',r'(?P<topic>.+?)(?:자격|자격조건|조건|요건)(?:을|를|은|는|이|가)?(?:알려줘|설명해줘|무엇)?'),
  ('application_eligibility',r'(?P<topic>.+?)에지원할수있는자격조건을알려줘'),
- ('application_eligibility',r'어떤요건을갖춰야(?P<topic>.+?)신청이가능한가요'),
+ ('application_eligibility',r'어떤요건을갖춰야(?P<topic>.+?)신청이가능해'),
  ('eligibility',r'(?P<topic>.+?)을하려면어떤요건을충족해야하나요'),
  ('application_term',r'(?P<topic>.+?)은몇학기다닌뒤에신청할수있어'),
  ('application_term',r'(?P<topic>.+?)신청자격을얻으려면몇학기를등록해야하나요'),

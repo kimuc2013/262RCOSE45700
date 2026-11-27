@@ -16,6 +16,8 @@ class CallProgress:
         self.elapsed={}
         self.active={}
         self.next_span=0
+        self.http_connection_counts={}
+        self.http_size_counts={}
 
     def record(self,stage):
         with self.lock:
@@ -49,7 +51,31 @@ class CallProgress:
             for stage,start in self.active.values():
                 values[stage]=values.get(stage,0)+now-start
             return {stage:round(values.get(stage,0)*1000,3) for stage in
-                    ('revision','cache_lookup','work_wait','retrieval',*STAGES,'answer_routing','cache_write')}
+                    ('revision','cache_lookup','work_wait','retrieval',*STAGES,'answer_routing','cache_write','connection_warmup')}
+
+    def warmup_pending(self):
+        with self.lock:return any(stage=='connection_warmup' for stage,_ in self.active.values())
+
+    def http_connect(self,stage):
+        with self.lock:self.http_connection_counts[stage]=self.http_connection_counts.get(stage,0)+1
+
+    def http_sizes(self,stage,sent,received):
+        with self.lock:
+            row=self.http_size_counts.setdefault(stage,{'request':0,'response':0})
+            row['request']+=sent;row['response']+=received
+
+    def http_timings(self):
+        with self.lock:
+            values=dict(self.elapsed);now=time.monotonic()
+            for key,start in self.active.values():values[key]=values.get(key,0)+now-start
+            timings={}
+            for key,value in values.items():
+                if key.startswith('http.'):
+                    _,stage,phase=key.split('.')
+                    timings.setdefault(stage,{})[phase]=round(value*1000,3)
+            return {'http_elapsed_ms':timings,'http_connections':dict(self.http_connection_counts),
+                    'http_bytes':{k:dict(v) for k,v in self.http_size_counts.items()},
+                    'http_timing_scope':'httpcore; wait_headers includes remote processing and network'}
 
 
 @contextmanager
@@ -100,6 +126,8 @@ def response_metrics(counts, elapsed_ms, *, shared=False, complete=True, observe
             'shared_model_work_unknown':uncertain_shared,
             'metrics_schema_version': 2, **release_metrics(),
             'stage_elapsed_ms': progress.get().timings() if progress.get() is not None else {},
-            'stage_timings_complete':complete,
+            **(progress.get().http_timings() if progress.get() is not None else {'http_elapsed_ms':{},'http_connections':{},'http_bytes':{}}),
+            'stage_timings_complete':complete and not (progress.get() is not None and progress.get().warmup_pending()),
+            'connection_warmup_pending':progress.get().warmup_pending() if progress.get() is not None else False,
             'stage_timing_scope':'inclusive_nested_request_spans',
             'latency_ms': elapsed_ms, 'server_elapsed_ms': elapsed_ms}
