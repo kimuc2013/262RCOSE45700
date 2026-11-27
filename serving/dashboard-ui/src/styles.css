@@ -35,3 +35,5 @@
 [data-slot=select-content] {border:1px solid var(--border)}
 .charts [data-slot=select-trigger]:hover {border-color:var(--input)}
 @media(max-width:600px){.charts{gap:16px}.charts [data-slot=card-footer]{line-height:1.5}.charts [data-slot=card-header]{align-items:flex-start}.charts [data-slot=card-header] [data-slot=select-trigger]{margin-top:8px}}
+:root {--chart-failure:#fb7185;--chart-target:#fbbf24}
+.charts [data-slot=card-footer] {line-height:1.5}
