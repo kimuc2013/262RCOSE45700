@@ -127,3 +127,33 @@ def test_relative_date_detection_matches_unicode_cache_identity():
     import unicodedata
     for q in ['오늘 이중전공 신청 가능해?','이중전공 신청 기간 알려줘']:
         assert date_sensitive(q) and date_sensitive(unicodedata.normalize('NFD',q))
+
+
+def test_reported_institution_particles_and_compound_procedure_share_search(retrieval_setup):
+    from academic_mcp.answer_aliases import intent,retrieval_proof
+    s,fake,now,day=ready(retrieval_setup)
+    a='고려대학교는 복학 신청 어디서 어떻게 해?'
+    b='고려대학교에 복학하려면 어느 곳에서 신청하면 되나요?'
+    assert intent(a)==('고려대학교:복학','application_location_and_procedure')
+    assert intent(b)==('고려대학교:복학','application_procedure')
+    assert retrieval_proof(a)==retrieval_proof(b) and retrieval_proof(a)
+    assert retrieval_proof(a+' mcp 로 조회해봐')==retrieval_proof(b)
+    assert proof(a)!=proof(b)  # A generated place-only answer may omit procedural steps.
+    first=s.search(a)
+    hit=s.search(b,history=[{'role':'user','content':'다른 세션'}])
+    assert hit['metrics']['retrieval_cache_kind']=='verified_intent'
+    assert hit['metrics']['model_calls']==0 and len(fake.requests)==2
+    assert hit['query']==b and hit['score_type']=='cached_reranker'
+    assert [x['id'] for x in hit['evidence']]==[x['id'] for x in first['evidence']]
+
+
+def test_institution_normalization_never_removes_foreign_or_population_scope():
+    from academic_mcp.answer_aliases import retrieval_proof
+    seed='고려대학교는 복학 신청 어디서 어떻게 해?'
+    assert retrieval_proof(seed)==retrieval_proof('고려대에 복학하려면 어느 곳에서 신청하면 되나요?')
+    for q in ['연세대학교에 복학하려면 어느 곳에서 신청하면 되나요?',
+              '고려대학교는 군제대 복학 신청 어디서 어떻게 해?',
+              '고려대학교는 대학원 복학 신청 어디서 어떻게 해?',
+              '고려대학교는 2027학년도 복학 신청 어디서 어떻게 해?',
+              '고려대학교는 복학 신청 어디서 어떻게 해? 필요한 서류도 알려줘']:
+        assert retrieval_proof(seed)!=retrieval_proof(q)

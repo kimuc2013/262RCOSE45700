@@ -92,7 +92,7 @@ class AcademicService:
         return {'mode': self.retrieval_mode(), 'threshold': self.threshold,
                 'retriever': self.retriever.profile() if self.retriever else None,
                 'cache_retention':RETENTION_POLICY if self.revision_cache else 'ttl',
-                'model_revision': self.model_revision, 'retrieval_policy': 'ranked-cache-v3-verified-intents', 'query_vectors': 'query-vectors-v1', 'semantic_cache': self.semantic_profile, 'context_policy': CONTEXT_POLICY if self.answer_context else 'disabled', 'calendar_route': 'explicit-semester-v1', 'history_policy': 'independent-retrieval-v1',
+                'model_revision': self.model_revision, 'retrieval_policy': 'ranked-cache-v4-institution-intents', 'query_vectors': 'query-vectors-v1', 'semantic_cache': self.semantic_profile, 'context_policy': CONTEXT_POLICY if self.answer_context else 'disabled', 'calendar_route': 'explicit-semester-v1', 'history_policy': 'independent-retrieval-v1',
                 'instructions': hashlib.sha256(INSTRUCTIONS.encode()).hexdigest(),
                 'model': {key: getattr(self.models, key, None) for key in
                           ('base', 'embedding', 'rewriter', 'reranker', 'rerank_path')} if self.models else None}
