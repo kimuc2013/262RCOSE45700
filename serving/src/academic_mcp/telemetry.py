@@ -16,8 +16,8 @@ from pathlib import Path
 
 trace = ContextVar('telemetry_trace', default=('', 'live'))
 REQUEST_FIELDS = {'tool', 'status', 'error_type', 'elapsed_ms', 'cache_hit',
-    'coalesced', 'retrieval_cache_hit', 'retrieval_coalesced', 'semantic_cache_hit', 'answer_mode', 'can_answer', 'response_bytes', 'semantic_cache_reason', 'semantic_candidate_count', 'semantic_best_similarity',
-    'embedding_cache_hit', 'model_calls', 'embedding_calls', 'rerank_calls', 'generation_calls', 'rewrite_calls', 'model_calls_complete', 'server_version', 'release_sha', 'server_instance', 'request_budget_ms', 'timeout_stage', 'answer_model', 'stage_elapsed_ms', 'stage_timings_complete', 'shared_model_calls', 'model_free_response', 'answer_cache_kind', 'shared_model_work_unknown', 'http_elapsed_ms', 'http_connections', 'http_bytes', 'cache_write_status'}
+    'coalesced', 'retrieval_cache_hit', 'retrieval_cache_kind', 'retrieval_coalesced', 'semantic_cache_hit', 'answer_mode', 'can_answer', 'response_bytes', 'semantic_cache_reason', 'semantic_candidate_count', 'semantic_best_similarity',
+    'embedding_cache_hit', 'model_calls', 'embedding_calls', 'rerank_calls', 'generation_calls', 'rewrite_calls', 'model_calls_complete', 'server_version', 'release_sha', 'server_instance', 'request_budget_ms', 'timeout_stage', 'answer_model', 'stage_elapsed_ms', 'stage_timings_complete', 'shared_model_calls', 'model_free_response', 'answer_cache_kind', 'shared_model_work_unknown', 'http_elapsed_ms', 'http_connections', 'http_bytes', 'cache_write_status','cache_retention_policy'}
 API_FIELDS = {'stage', 'model', 'elapsed_ms', 'status_code', 'error_type',
     'prompt_tokens', 'completion_tokens', 'total_tokens', 'cached_prompt_tokens'}
 
@@ -79,7 +79,7 @@ class Telemetry:
                 retrieval_coalesced=metrics.get('retrieval_coalesced', False),
                 semantic_cache_hit=metrics.get('semantic_cache_hit', False),
                 answer_mode=result.get('answer_mode'), can_answer=result.get('can_answer'))
-            for field in ('semantic_cache_reason','semantic_candidate_count','semantic_best_similarity',
+            for field in ('cache_retention_policy','retrieval_cache_kind','semantic_cache_reason','semantic_candidate_count','semantic_best_similarity',
                           'embedding_cache_hit','model_calls','embedding_calls','rerank_calls',
                           'generation_calls','rewrite_calls','model_calls_complete','server_version',
                           'release_sha','server_instance','request_budget_ms','timeout_stage','answer_model',

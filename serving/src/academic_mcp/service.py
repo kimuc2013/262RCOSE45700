@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo
 from .search import bm25, cosine, fuse, normalize
 from .store import Store
 from .cache import identity
+from .cache_policy import partition, expires, POLICY as RETENTION_POLICY
 from .context import build_context, POLICY as CONTEXT_POLICY
 from .calendar_route import calendar_request, matching_events
 from .runtime import (Limits, RequestController, ServingError, DeadlineExceeded,
@@ -43,7 +44,7 @@ def today_seoul():
 
 class AcademicService:
     def __init__(self, store: Store, models=None, *, clock=time.time, today=today_seoul,
-                 cache_ttl=300, rerank_min_score=None, limits=None, calendar_limits=None, retriever=None, answer_context=False, telemetry=None, ranked_cache_ttl=1800, semantic_cache=False, semantic_threshold=.94):
+                 cache_ttl=300, rerank_min_score=None, limits=None, calendar_limits=None, retriever=None, answer_context=False, telemetry=None, ranked_cache_ttl=1800, semantic_cache=False, semantic_threshold=.94, revision_cache=False):
         if models is not None and retriever is not None:
             raise ValueError('Choose retriever or legacy models, not both')
         self.store, self.models, self.retriever = store, models, retriever
@@ -56,6 +57,8 @@ class AcademicService:
             from .model_transport import ReliableModelClient
             retriever._client = ReliableModelClient(retriever._client)
         self.clock, self.today, self.cache_ttl = clock, today, cache_ttl
+        if type(revision_cache) is not bool:raise ValueError("revision_cache must be boolean")
+        self.revision_cache=revision_cache
         self.answer_context = answer_context
         self.threshold = rerank_min_score
         self.model_revision = os.getenv('SERVING_MODEL_REVISION', 'unversioned')
@@ -88,7 +91,8 @@ class AcademicService:
     def profile(self):
         return {'mode': self.retrieval_mode(), 'threshold': self.threshold,
                 'retriever': self.retriever.profile() if self.retriever else None,
-                'model_revision': self.model_revision, 'retrieval_policy': 'ranked-cache-v2-polite', 'query_vectors': 'query-vectors-v1', 'semantic_cache': self.semantic_profile, 'context_policy': CONTEXT_POLICY if self.answer_context else 'disabled', 'calendar_route': 'explicit-semester-v1', 'history_policy': 'independent-retrieval-v1',
+                'cache_retention':RETENTION_POLICY if self.revision_cache else 'ttl',
+                'model_revision': self.model_revision, 'retrieval_policy': 'ranked-cache-v3-verified-intents', 'query_vectors': 'query-vectors-v1', 'semantic_cache': self.semantic_profile, 'context_policy': CONTEXT_POLICY if self.answer_context else 'disabled', 'calendar_route': 'explicit-semester-v1', 'history_policy': 'independent-retrieval-v1',
                 'instructions': hashlib.sha256(INSTRUCTIONS.encode()).hexdigest(),
                 'model': {key: getattr(self.models, key, None) for key in
                           ('base', 'embedding', 'rewriter', 'reranker', 'rerank_path')} if self.models else None}
@@ -106,7 +110,7 @@ class AcademicService:
         # This module accepts independent questions and never consumes history.
         # Rewritten legacy requests still require complete conversation isolation.
         effective_history = [] if self.retriever else history
-        return identity(query, effective_history, top_k, semester, target, self.profile(), self.today().isoformat())
+        return identity(query, effective_history, top_k, semester, target, self.profile(), partition(self,query))
 
     async def read_revision(self, deadline):
         # SQLite can briefly lock while opening/closing WAL connections as well
@@ -186,7 +190,7 @@ class AcademicService:
                 raise DeadlineExceeded('Request time budget exhausted')
             calls = result.get('metrics', {}).get('model_calls', 0)
             worker_metrics = result.get('metrics', {})
-            for field in ('retrieval_cache_hit', 'retrieval_coalesced', 'semantic_cache_hit', 'semantic_similarity', 'semantic_cache_reason', 'semantic_candidate_count', 'semantic_best_similarity', 'embedding_cache_hit','embedding_coalesced'):
+            for field in ('retrieval_cache_hit', 'retrieval_cache_kind', 'retrieval_coalesced', 'semantic_cache_hit', 'semantic_similarity', 'semantic_cache_reason', 'semantic_candidate_count', 'semantic_best_similarity', 'embedding_cache_hit','embedding_coalesced'):
                 if field in worker_metrics:
                     metrics[field] = worker_metrics[field]
             metrics.update(status=result['status'], coalesced=coalesced, queue_ms=queue_ms,
@@ -195,6 +199,7 @@ class AcademicService:
             metrics.update(cache_fast_path=fast_hit, cache_lookup_ms=cache_ms)
             if fast_hit:metrics['semantic_cache_reason']='response_cache_hit'
             metrics.update(response_metrics(worker_metrics, 0, shared=coalesced))
+            metrics['cache_retention_policy']=RETENTION_POLICY if self.revision_cache else 'ttl'
             result['request_id'] = request_id
             return result
         except asyncio.CancelledError:
@@ -429,7 +434,7 @@ class AcademicService:
             if current and current[0] == revision:
                 checkpoint()
                 db.execute("INSERT OR REPLACE INTO cache VALUES (?, ?, ?, ?)",
-                           (key, revision, min(self.clock() + self.cache_ttl, result.get("semantic_cache", {}).get("expires_at", float("inf"))), json.dumps(result, ensure_ascii=False)))
+                           (key, revision, min(expires(self,query,self.cache_ttl), result.get("semantic_cache", {}).get("expires_at", float("inf"))), json.dumps(result, ensure_ascii=False)))
             elif revision != 'empty':
                 raise DataChanged('Source revision changed before cache publication; retry')
         return result
@@ -486,6 +491,7 @@ def build_service():
                            answer_context=os.getenv('SERVING_ANSWER_CONTEXT', 'false').lower() == 'true',
                            telemetry=Telemetry(metrics_path) if metrics_path else None,
                            ranked_cache_ttl=float(os.getenv('SERVING_RANKED_CACHE_TTL', '1800')),
+                           revision_cache=os.getenv('SERVING_REVISION_CACHE','true').lower()=='true',
                            semantic_cache=os.getenv('SERVING_SEMANTIC_CACHE', 'true').lower() == 'true',
                            semantic_threshold=float(os.getenv('SERVING_SEMANTIC_THRESHOLD', '.94')),
                            rerank_min_score=float(threshold) if threshold else None,

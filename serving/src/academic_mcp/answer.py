@@ -8,6 +8,8 @@ import time
 import sqlite3
 import uuid
 import threading
+from datetime import date
+from .cache_policy import expires, date_sensitive, POLICY as RETENTION_POLICY
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
 
@@ -60,7 +62,7 @@ class FinalAnswers:
         self._warmup_recovery=False
         self._warmup_future=None
         self._warmup_pool=ThreadPoolExecutor(max_workers=1,thread_name_prefix='answer-preconnect') if self.preconnect else None
-        self.policy=hashlib.sha256(json.dumps([base_url,model,PROMPT,max_tokens,reasoning_effort,'strict-schema-v2',REPAIR,DIRECT_POLICY,LITERAL_POLICY,ALIAS_POLICY],ensure_ascii=False).encode()).hexdigest()
+        self.policy=hashlib.sha256(json.dumps([base_url,model,PROMPT,max_tokens,reasoning_effort,'strict-schema-v3-freshness',REPAIR,DIRECT_POLICY,LITERAL_POLICY,ALIAS_POLICY],ensure_ascii=False).encode()).hexdigest()
 
     def close(self):
         if self._warmup_pool is not None:self._warmup_pool.shutdown(wait=True,cancel_futures=True)
@@ -94,7 +96,9 @@ class FinalAnswers:
             row=db.execute('SELECT payload FROM cache WHERE key=? AND revision=? AND expires>?',
                            (key,revision,self.service.clock())).fetchone()
         if not row:return None
-        value=json.loads(row[0]);value['_generation_calls']=0
+        value=json.loads(row[0])
+        if value.get('_cache_day') not in (None,self.service.today().isoformat()):return None
+        value['_generation_calls']=0
         value.pop('_model_counts',None)
         return value
 
@@ -122,6 +126,7 @@ class FinalAnswers:
                            (target,revision,self.service.clock())).fetchone()
             if not row:return None
         value=json.loads(row[0])
+        if value.get('_cache_day') not in (None,self.service.today().isoformat()):return None
         if value.get('status')!='answered' or value.get('can_answer') is not True:return None
         value.pop('_model_counts',None);value['_generation_calls']=0
         value['_answer_cache_kind']='verified_alias'
@@ -157,14 +162,22 @@ class FinalAnswers:
             if current_revision!=revision:
                 raise DataChanged('Source changed during answer; retry')
             if time.monotonic()>=deadline:raise DeadlineExceeded('Answer deadline exhausted')
+            hit.pop('_cache_day',None)
+            fresh=hit.pop('_freshness_info',None)
+            if fresh is not None:
+                current=f"{self.service.today().year}-{1 if self.service.today().month<8 else 2}"
+                hit['freshness_warning']=bool(fresh['dates']) and (bool(fresh['semester'] and fresh['semester']!=current) or any((self.service.today()-date.fromisoformat(d)).days>fresh['max_age'] for d in fresh['dates']))
             counts = hit.pop('_model_counts', {})
             cache_kind=hit.pop('_answer_cache_kind',None)
             cache_write_status=hit.pop('_cache_write_status',None)
+            retrieval_kind=hit.pop('_retrieval_cache_kind',None)
             cache_reason=hit.pop('_semantic_cache_reason',None)
             embedding_hit=hit.pop('_embedding_cache_hit',None)
             hit['request_id']=uuid.uuid4().hex
             hit['metrics']={'cache_hit':cached,'coalesced':coalesced,'answer_cache_kind':cache_kind,
                 'cache_write_status':'hit' if cached else cache_write_status,
+                'cache_retention_policy':RETENTION_POLICY if self.service.revision_cache else 'ttl',
+                'retrieval_cache_kind':None if cached else retrieval_kind,
                 'retrieval_cache_hit':None if cached or coalesced else hit.pop('_retrieval_cache_hit',None),
                 'semantic_cache_hit':False if cached or coalesced else hit.pop('_semantic_cache_hit',False),
                 'semantic_cache_reason':'response_cache_hit' if cached else 'coalesced' if coalesced else cache_reason,
@@ -276,6 +289,10 @@ class FinalAnswers:
                     'can_answer':can,'citations':list(dict.fromkeys(original[i-1]['url'] for i in ids)),
                     'revision':revision,'display_verbatim':True,'_generation_calls':attempt+1,
                     'freshness_warning':result.get('freshness_warning',False)}
+        if date_sensitive(query) or date_sensitive(output.get('answer')):
+            output['_cache_day']=self.service.today().isoformat()
+        output['_freshness_info']={'dates':[e['collected_at'] for e in result.get('events',result.get('evidence',[]))],
+            'semester':semester,'max_age':7 if result.get('retrieval_mode')=='structured_calendar' else 180}
         if tracker is not None:tracker.phase('cache_write')
         output['_model_counts'] = {**since(calls_before),
             'retrieval_coalesced':result.get('metrics',{}).get('retrieval_coalesced',False),
@@ -283,6 +300,7 @@ class FinalAnswers:
         output['_embedding_cache_hit']=result.get('metrics',{}).get('embedding_cache_hit')
         output['_semantic_cache_reason']=result.get('metrics',{}).get('semantic_cache_reason')
         output['_semantic_cache_hit']=result.get('metrics',{}).get('semantic_cache_hit',False)
+        output['_retrieval_cache_kind']=result.get('metrics',{}).get('retrieval_cache_kind')
         output['_retrieval_cache_hit']=bool(result.get('cache_hit') or
             result.get('metrics',{}).get('retrieval_cache_hit'))
         checkpoint()
@@ -301,14 +319,14 @@ class FinalAnswers:
                     db.execute('DELETE FROM cache WHERE expires<=?',(self.service.clock(),))
                     if db.execute('SELECT count(*) FROM cache').fetchone()[0]>=999:
                         db.execute('DELETE FROM cache WHERE key IN (SELECT key FROM cache ORDER BY expires LIMIT 100)')
-                    expires=self.service.clock()+self.service.cache_ttl
+                    expiry=expires(self.service,output.get('answer') if date_sensitive(output.get('answer')) else query,self.service.cache_ttl) if output.get('status')=='answered' and output.get('can_answer') is True else self.service.clock()+self.service.cache_ttl
                     db.execute('INSERT OR REPLACE INTO cache VALUES(?,?,?,?)',
-                        (key,revision,expires,json.dumps({k:v for k,v in output.items() if k not in ('_model_counts','_cache_write_status')},ensure_ascii=False)))
+                        (key,revision,expiry,json.dumps({k:v for k,v in output.items() if k not in ('_model_counts','_cache_write_status')},ensure_ascii=False)))
                     if alias_key is not None and output.get('status')=='answered' and output.get('can_answer') is True:
                         # One direct pointer only; its lifetime never outlives the
                         # completed source answer. Reuse never refreshes either TTL.
                         db.execute('INSERT OR REPLACE INTO cache VALUES(?,?,?,?)',
-                            (alias_key,revision,expires,
+                            (alias_key,revision,expiry,
                              json.dumps({'target':key,'verification':ALIAS_POLICY})))
         except sqlite3.OperationalError as exc:
             if (getattr(exc,'sqlite_errorcode',0)&255) not in (sqlite3.SQLITE_BUSY,sqlite3.SQLITE_LOCKED):raise
