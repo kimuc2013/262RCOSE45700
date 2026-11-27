@@ -57,3 +57,6 @@ body {background:var(--background)}
 [data-slot=alert] {border-style:solid}
 [data-slot=input] {border-style:solid;color:var(--foreground)}
 @media(max-width:600px){#cards{grid-template-columns:1fr}#console-header [data-console-controls]{width:100%}#console-header [data-slot=select-trigger]{flex:1;min-width:128px}#console-header [data-slot=button]{flex:1}}
+
+/* Radix scroll locking resets body spacing. Keep layout spacing on an inner frame. */
+.ops-layout {background:var(--background)}
