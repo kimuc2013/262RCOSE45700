@@ -56,6 +56,8 @@ class FinalAnswers:
         self.preconnect=(transport is None) if preconnect is None else bool(preconnect)
         self._warmup_lock=threading.Lock()
         self._warmup_last=float('-inf')
+        self._warmup_scheduled=float('-inf')
+        self._warmup_recovery=False
         self._warmup_future=None
         self._warmup_pool=ThreadPoolExecutor(max_workers=1,thread_name_prefix='answer-preconnect') if self.preconnect else None
         self.policy=hashlib.sha256(json.dumps([base_url,model,PROMPT,max_tokens,reasoning_effort,'strict-schema-v2',REPAIR,DIRECT_POLICY,LITERAL_POLICY,ALIAS_POLICY],ensure_ascii=False).encode()).hexdigest()
@@ -70,8 +72,12 @@ class FinalAnswers:
         if self._warmup_pool is None:return
         with self._warmup_lock:
             now=time.monotonic()
-            if now-self._warmup_last<45 or (self._warmup_future is not None and not self._warmup_future.done()):return
-            self._warmup_last=now
+            if self._warmup_future is not None and not self._warmup_future.done():return
+            if self._warmup_recovery:
+                if now-self._warmup_scheduled<2:return
+            elif now-self._warmup_last<45:return
+            self._warmup_last=self._warmup_scheduled=now
+            self._warmup_recovery=False
             def warm():
                 try:
                     with timed_stage('connection_warmup'):self.client.get('models',timeout=.6)
@@ -247,7 +253,14 @@ class FinalAnswers:
                     with self._warmup_lock:self._warmup_last=time.monotonic()
                     record_attempt('generation')
                     with timed_stage('generation'):
-                        response=traced_post(self.client,'generation','chat/completions',json=payload,timeout=timeout)
+                        try:
+                            response=traced_post(self.client,'generation','chat/completions',json=payload,timeout=timeout)
+                        except httpx.TransportError:
+                            # A failed stream cannot be pooled. Permit the next
+                            # retrieval to overlap its replacement connection,
+                            # bounded to one catalog request per two seconds.
+                            with self._warmup_lock:self._warmup_recovery=True
+                            raise
                     response.raise_for_status();checkpoint()
                     data=response.json()
                     if data.get('model')!=self.model:raise ValueError('Unexpected answer model')
