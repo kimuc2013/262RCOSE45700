@@ -56,6 +56,15 @@ RULES=(
 )
 
 
+def intent_key(query):
+    """Whole-question public field identity, including every captured value."""
+    q=polite_query(query);matches=[]
+    for doc,sections,pattern in RULES:
+        m=re.fullmatch(pattern,q)
+        if m:matches.append((doc,sections,tuple(sorted(m.groupdict().items()))))
+    return matches[0] if len(matches)==1 else None
+
+
 def lookup(query,chunks,semester=None,target=None):
     if semester is not None or target is not None:return None
     q=polite_query(query)

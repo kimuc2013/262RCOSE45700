@@ -7,6 +7,7 @@ import re
 import unicodedata
 
 from .runtime import checkpoint, DataChanged
+from .cache_policy import partition, expires
 
 POLICY = 'guarded-semantic-v2'
 # Multiple topic/intent matches are retained, not resolved by precedence.
@@ -104,7 +105,7 @@ class SemanticCache:
             metrics['semantic_cache_reason']=reason
             return None
         metrics['semantic_cache_reason']='no_compatible_candidate'
-        context=[POLICY,width,revision,self.service.profile(),self.service.today().isoformat(),semester,target,sig]
+        context=[POLICY,width,revision,self.service.profile(),partition(self.service,query),semester,target,sig]
         bucket='semantic:'+hashlib.sha256(json.dumps(context,sort_keys=True,ensure_ascii=False).encode()).hexdigest()+':'
         # Use the module's validated embedding call. On a miss, give the same
         # vector to a request-local copy so the module never embeds twice.
@@ -159,7 +160,7 @@ class SemanticCache:
         worker.embed=embed
         return worker.search(query,width,chunks=chunks,revision=revision)
 
-    def publish(self,prepared,key,result,revision):
+    def publish(self,prepared,key,result,revision,query=None):
         if prepared is None or result['status'] not in ('found','evidence_available') or not result['evidence']:return
         s=self.service;bucket,vector=prepared
         with s.store.connect() as db:
@@ -173,4 +174,4 @@ class SemanticCache:
             # Only fresh retrieval becomes a semantic source. Reused results
             # never become semantic aliases, preventing transitive drift.
             db.execute('INSERT OR REPLACE INTO cache VALUES(?,?,?,?)',
-                (bucket+key,revision,s.clock()+s.ranked_cache.ttl,json.dumps({'embedding':vector,'result':result},ensure_ascii=False)))
+                (bucket+key,revision,expires(s,query,s.ranked_cache.ttl),json.dumps({'embedding':vector,'result':result},ensure_ascii=False)))

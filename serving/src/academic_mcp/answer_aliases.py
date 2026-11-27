@@ -4,7 +4,7 @@ import json
 import re
 from .cache import ranked_query
 
-POLICY='verified-answer-intents-v3'
+POLICY='verified-answer-intents-v4'
 
 
 def polite_query(query):
@@ -29,6 +29,11 @@ GRAMMARS=(
  ('application_eligibility',r'(?P<topic>.+?)에지원할수있는자격조건을알려줘'),
  ('application_eligibility',r'어떤요건을갖춰야(?P<topic>.+?)신청이가능해'),
  ('eligibility',r'(?P<topic>.+?)을하려면어떤요건을충족해야하나요'),
+ ('application_eligibility',r'(?P<topic>.+?)(?:을|를)신청하려면어떤자격(?:이)?(?:필요해|필요한가요)'),
+ ('application_eligibility',r'(?P<topic>.+?)신청에필요한자격(?:을)?(?:알려줘|설명해줘)'),
+ ('scoped_graduation_credits',r'(?P<topic>.+?)(?:의)?졸업요건(?:의)?(?:이수학점|학점)(?:을|이|은)?(?:알려줘|무엇)?'),
+ ('scoped_graduation_credits',r'(?P<topic>.+?)졸업하려면(?:총)?몇학점(?:을)?(?:이수해야해|채워야해|들어야해)'),
+ ('scoped_graduation_credits',r'(?P<topic>.+?)(?:의)?졸업에필요한이수학점(?:은)?(?:몇학점인가요|알려줘)'),
  ('application_term',r'(?P<topic>.+?)은몇학기다닌뒤에신청할수있어'),
  ('application_term',r'(?P<topic>.+?)신청자격을얻으려면몇학기를등록해야하나요'),
  ('application_term',r'몇학기를다녀야(?P<topic>.+?)을신청할수있나요'),
@@ -69,6 +74,15 @@ def proof(query):
     return hashlib.sha256(json.dumps([POLICY,value],ensure_ascii=False).encode()).hexdigest() if value else None
 
 
+def retrieval_proof(query):
+    """Evidence-only field equivalence; never authorizes a generated answer hit."""
+    known=proof(query)
+    if known:return known
+    from .policy_fields import intent_key
+    field=intent_key(query)
+    return hashlib.sha256(json.dumps(['public-fields-v1',field],ensure_ascii=False).encode()).hexdigest() if field else None
+
+
 # Public document names, not evaluation question IDs. Missing/renamed documents
 # simply fall back to retrieval; no facts or policy values are hardcoded here.
 DOCUMENTS={
@@ -92,6 +106,7 @@ def source_item(query,chunks,semester=None,target=None):
     value=intent(query)
     if not value:return None
     topic,field=value
+    if field not in SECTIONS:return None
     docs=DOCUMENTS.get(topic,())
     rows=[r for r in chunks if r.get('doc_id') in docs and
           re.sub(r'\s+','',r.get('section','')) in SECTIONS[field]]

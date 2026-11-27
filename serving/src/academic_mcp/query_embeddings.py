@@ -5,6 +5,7 @@ import json
 import threading
 
 from .cache import canonical_query
+from .cache_policy import expires
 from .runtime import checkpoint, remaining_timeout, Overloaded, DataChanged
 
 POLICY = 'query-vectors-v1'
@@ -58,7 +59,7 @@ class QueryEmbeddings:
                     db.execute('DELETE FROM cache WHERE key IN (SELECT key FROM cache ORDER BY expires LIMIT 100)')
                 checkpoint()
                 db.execute('INSERT OR REPLACE INTO cache VALUES(?,?,?,?)',
-                           (key,revision,s.clock()+s.ranked_cache.ttl,json.dumps(value)))
+                           (key,revision,expires(s,None,s.ranked_cache.ttl),json.dumps(value)))
             return copy.deepcopy(value)
         finally:
             if acquired:lock.release()
