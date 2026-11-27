@@ -1,3 +1,4 @@
+import "./console"
 import * as React from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Line, LineChart, ReferenceLine, XAxis, YAxis } from "recharts"
