@@ -33,9 +33,10 @@ class QueryEmbeddings:
         with self._guard:
             lock,refs=self._flights.get(key,(threading.Lock(),0))
             self._flights[key]=(lock,refs+1)
-        acquired=False
+        acquired=lock.acquire(blocking=False)
+        metrics['embedding_coalesced']=not acquired
         try:
-            acquired=lock.acquire(timeout=remaining_timeout(s.requests.limits.request_timeout))
+            if not acquired:acquired=lock.acquire(timeout=remaining_timeout(s.requests.limits.request_timeout))
             if not acquired:raise Overloaded('Query embedding wait exhausted')
             value=read()
             if value is not None:

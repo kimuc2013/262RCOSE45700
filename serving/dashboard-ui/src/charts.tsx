@@ -6,11 +6,12 @@ import { ChartContainer, ChartLegend, ChartTooltip, ChartTooltipContent, type Ch
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "./components/ui/card"
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "./components/ui/select"
 
-type Point = { ts:number; requests:number; failures:number; cache_rate:number|null; effective_cache_rate:number|null; semantic_cache_rate:number|null; shared_rate:number|null; p50_ms:number|null; p95_ms:number|null; api_calls:Record<string,number>; generation_tokens:number|null }
+type Point = { ts:number; requests:number; failures:number; cache_rate:number|null; model_free_response_rate:number|null; effective_cache_rate:number|null; semantic_cache_rate:number|null; shared_rate:number|null; p50_ms:number|null; p95_ms:number|null; api_calls:Record<string,number>; generation_tokens:number|null }
 type Series = { key:string; label:string; color:string }
 type Spec = { id:string; title:string; description:string; kind:"bar"|"line"|"area"; unit:string; percent?:boolean; stacked?:boolean; series:Series[] }
 const specs:Spec[] = [
   {id:"requests",title:"요청량과 실패",description:"선택 기간의 전체 도구 호출과 실패",kind:"area",unit:"회",series:[{key:"requests",label:"전체 호출",color:"var(--chart-1)"},{key:"failures",label:"오류·취소·시간 초과",color:"var(--chart-2)"}]},
+  {id:"model-free",title:"모델 무호출 응답률",description:"완료 답변 중 모델 작업 0회, 공유 모델 호출·보류·실패 제외",kind:"line",unit:"%",percent:true,series:[{key:"model_free_response_rate",label:"모델 무호출",color:"var(--chart-1)"}]},
   {id:"cache",title:"캐시와 요청 공유",description:"응답 캐시, 검색 재사용과 진행 중 요청 공유",kind:"line",unit:"%",percent:true,series:[{key:"cache_rate",label:"응답 캐시",color:"var(--chart-1)"},{key:"effective_cache_rate",label:"검색 재사용 포함",color:"var(--chart-2)"},{key:"semantic_cache_rate",label:"의미 캐시",color:"var(--chart-3)"},{key:"shared_rate",label:"요청 공유",color:"var(--chart-4)"}]},
   {id:"latency",title:"서버 처리 시간",description:"전체 도구 호출의 p50과 p95, 외부 왕복 제외",kind:"line",unit:"초",series:[{key:"p50",label:"p50",color:"var(--chart-1)"},{key:"p95",label:"p95",color:"var(--chart-2)"}]},
   {id:"api",title:"실제 모델 API 호출",description:"임베딩, 리랭킹, 생성의 물리 시도 합계",kind:"bar",unit:"회",stacked:true,series:[{key:"embedding",label:"임베딩",color:"var(--chart-1)"},{key:"rerank",label:"리랭킹",color:"var(--chart-2)"},{key:"generation",label:"생성",color:"var(--chart-3)"}]},

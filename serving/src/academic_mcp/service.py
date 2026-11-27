@@ -185,7 +185,7 @@ class AcademicService:
                 raise DeadlineExceeded('Request time budget exhausted')
             calls = result.get('metrics', {}).get('model_calls', 0)
             worker_metrics = result.get('metrics', {})
-            for field in ('retrieval_cache_hit', 'retrieval_coalesced', 'semantic_cache_hit', 'semantic_similarity', 'semantic_cache_reason', 'semantic_candidate_count', 'semantic_best_similarity', 'embedding_cache_hit'):
+            for field in ('retrieval_cache_hit', 'retrieval_coalesced', 'semantic_cache_hit', 'semantic_similarity', 'semantic_cache_reason', 'semantic_candidate_count', 'semantic_best_similarity', 'embedding_cache_hit','embedding_coalesced'):
                 if field in worker_metrics:
                     metrics[field] = worker_metrics[field]
             metrics.update(status=result['status'], coalesced=coalesced, queue_ms=queue_ms,
@@ -265,7 +265,9 @@ class AcademicService:
             metrics['status'] = 'error'
             raise
         finally:
-            metrics.update(response_metrics(since(calls_before), round((time.perf_counter() - start) * 1000, 3)))
+            metrics.update(response_metrics({**since(calls_before),
+                'retrieval_coalesced':metrics.get('retrieval_coalesced',False),
+                'embedding_coalesced':metrics.get('embedding_coalesced',False)}, round((time.perf_counter() - start) * 1000, 3)))
             if isinstance(locals().get('result'), dict):
                 result['metrics'] = dict(metrics)
             # Never log raw questions, history, documents, API keys, or authorization headers.

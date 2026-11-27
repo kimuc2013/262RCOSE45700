@@ -11,6 +11,7 @@ import httpx
 from .call_metrics import attempts, since, record_attempt, response_metrics, CallProgress, progress, timed_stage
 from .direct_answer import direct_answer, POLICY as DIRECT_POLICY
 from .literal_route import lookup as literal_lookup, POLICY as LITERAL_POLICY
+from .answer_aliases import polite_query, proof as alias_proof, POLICY as ALIAS_POLICY
 
 from .runtime import (DeadlineExceeded, DataChanged, checkpoint, remaining_timeout)
 
@@ -46,12 +47,12 @@ class FinalAnswers:
         if service.telemetry is not None:
             from .telemetry import ObservedClient
             self.client=ObservedClient(self.client,service.telemetry,'generation')
-        self.policy=hashlib.sha256(json.dumps([base_url,model,PROMPT,max_tokens,reasoning_effort,'strict-schema-v2',REPAIR,DIRECT_POLICY,LITERAL_POLICY],ensure_ascii=False).encode()).hexdigest()
+        self.policy=hashlib.sha256(json.dumps([base_url,model,PROMPT,max_tokens,reasoning_effort,'strict-schema-v2',REPAIR,DIRECT_POLICY,LITERAL_POLICY,ALIAS_POLICY],ensure_ascii=False).encode()).hexdigest()
 
     def close(self):self.client.close()
 
     def key(self,query,history,top_k,semester,target):
-        return 'answer:'+self.policy+':'+self.service.cache_key(query,history,top_k,semester,target)
+        return 'answer:'+self.policy+':'+self.service.cache_key(polite_query(query),history,top_k,semester,target)
 
     def cached(self,key,revision):
         checkpoint()
@@ -63,11 +64,41 @@ class FinalAnswers:
         value.pop('_model_counts',None)
         return value
 
+    def alias_key(self,query,history,top_k,semester,target):
+        proof=alias_proof(query)
+        return ('answer-alias:'+self.policy+':'+self.service.cache_key(
+            proof,history,top_k,semester,target)) if proof else None
+
+    def lookup(self,key,revision,alias_key=None):
+        value=self.cached(key,revision)
+        if value is not None:
+            value['_answer_cache_kind']='response'
+            return value
+        if alias_key is None:return None
+        checkpoint()
+        with self.service.store.connect(timeout=1) as db:
+            db.execute('BEGIN')
+            row=db.execute('SELECT payload FROM cache WHERE key=? AND revision=? AND expires>?',
+                           (alias_key,revision,self.service.clock())).fetchone()
+            if not row:return None
+            alias=json.loads(row[0]);target=alias.get('target')
+            if alias.get('verification')!=ALIAS_POLICY:return None
+            if not isinstance(target,str) or not target.startswith('answer:'+self.policy+':'):return None
+            row=db.execute('SELECT payload FROM cache WHERE key=? AND revision=? AND expires>?',
+                           (target,revision,self.service.clock())).fetchone()
+            if not row:return None
+        value=json.loads(row[0])
+        if value.get('status')!='answered' or value.get('can_answer') is not True:return None
+        value.pop('_model_counts',None);value['_generation_calls']=0
+        value['_answer_cache_kind']='verified_alias'
+        return value
+
     async def answer(self,query,history=None,top_k=5,semester=None,target=None):
         start=time.monotonic();deadline=start+self.budget
         history=[] if history is None else history
         self.service.validate(query,history,top_k,semester,target)
         key=self.key(query,history,top_k,semester,target)
+        alias_key=self.alias_key(query,history,top_k,semester,target)
         tracker=CallProgress()
         progress_token=progress.set(tracker)
         try:
@@ -77,14 +108,14 @@ class FinalAnswers:
             tracker.phase('cache_lookup')
             with timed_stage('cache_lookup'):
                 hit,_,_=await self.service.cache_reads.execute('read:'+key+revision,
-                    lambda:self.cached(key,revision),deadline=deadline)
+                    lambda:self.lookup(key,revision,alias_key),deadline=deadline)
             coalesced=False
             if hit is None:
                 tracker.phase('admission')
                 with timed_stage('work_wait'):
-                    hit,coalesced,queue_ms=await self.service.requests.execute(key+revision,
+                    hit,coalesced,queue_ms=await self.service.requests.execute((alias_key or key)+revision,
                         lambda:self.generate(key,revision,query,history,top_k,semester,target),deadline=deadline)
-                cached=False
+                cached=hit.get('_answer_cache_kind') is not None
             else:cached=True
             tracker.phase('revision')
             with timed_stage('revision'):
@@ -93,10 +124,11 @@ class FinalAnswers:
                 raise DataChanged('Source changed during answer; retry')
             if time.monotonic()>=deadline:raise DeadlineExceeded('Answer deadline exhausted')
             counts = hit.pop('_model_counts', {})
+            cache_kind=hit.pop('_answer_cache_kind',None)
             cache_reason=hit.pop('_semantic_cache_reason',None)
             embedding_hit=hit.pop('_embedding_cache_hit',None)
             hit['request_id']=uuid.uuid4().hex
-            hit['metrics']={'cache_hit':cached,'coalesced':coalesced,
+            hit['metrics']={'cache_hit':cached,'coalesced':coalesced,'answer_cache_kind':cache_kind,
                 'retrieval_cache_hit':None if cached or coalesced else hit.pop('_retrieval_cache_hit',None),
                 'semantic_cache_hit':False if cached or coalesced else hit.pop('_semantic_cache_hit',False),
                 'semantic_cache_reason':'response_cache_hit' if cached else 'coalesced' if coalesced else cache_reason,
@@ -131,7 +163,8 @@ class FinalAnswers:
     def generate(self,key,revision,query,history,top_k,semester,target):
         checkpoint()
         calls_before = attempts.get()
-        cached=self.cached(key,revision)
+        alias_key=self.alias_key(query,history,top_k,semester,target)
+        cached=self.lookup(key,revision,alias_key)
         if cached is not None:return cached
         tracker=progress.get()
         if tracker is not None:tracker.phase('retrieval')
@@ -199,7 +232,9 @@ class FinalAnswers:
                     'revision':revision,'display_verbatim':True,'_generation_calls':attempt+1,
                     'freshness_warning':result.get('freshness_warning',False)}
         if tracker is not None:tracker.phase('cache_write')
-        output['_model_counts'] = since(calls_before)
+        output['_model_counts'] = {**since(calls_before),
+            'retrieval_coalesced':result.get('metrics',{}).get('retrieval_coalesced',False),
+            'embedding_coalesced':result.get('metrics',{}).get('embedding_coalesced',False)}
         output['_embedding_cache_hit']=result.get('metrics',{}).get('embedding_cache_hit')
         output['_semantic_cache_reason']=result.get('metrics',{}).get('semantic_cache_reason')
         output['_semantic_cache_hit']=result.get('metrics',{}).get('semantic_cache_hit',False)
@@ -213,10 +248,17 @@ class FinalAnswers:
                 if (current[0] if current else 'empty')!=revision:raise DataChanged('Source changed during generation')
                 checkpoint()
                 db.execute('DELETE FROM cache WHERE expires<=?',(self.service.clock(),))
-                if db.execute('SELECT count(*) FROM cache').fetchone()[0]>=1000:
+                if db.execute('SELECT count(*) FROM cache').fetchone()[0]>=999:
                     db.execute('DELETE FROM cache WHERE key IN (SELECT key FROM cache ORDER BY expires LIMIT 100)')
+                expires=self.service.clock()+self.service.cache_ttl
                 db.execute('INSERT OR REPLACE INTO cache VALUES(?,?,?,?)',
-                    (key,revision,self.service.clock()+self.service.cache_ttl,json.dumps({k:v for k,v in output.items() if k != '_model_counts'},ensure_ascii=False)))
+                    (key,revision,expires,json.dumps({k:v for k,v in output.items() if k != '_model_counts'},ensure_ascii=False)))
+                if alias_key is not None and output.get('status')=='answered' and output.get('can_answer') is True:
+                    # One direct pointer only; its lifetime never outlives the
+                    # completed source answer. Reuse never refreshes either TTL.
+                    db.execute('INSERT OR REPLACE INTO cache VALUES(?,?,?,?)',
+                        (alias_key,revision,expires,
+                         json.dumps({'target':key,'verification':ALIAS_POLICY})))
         return output
 
     def parse(self,data,source_count):
