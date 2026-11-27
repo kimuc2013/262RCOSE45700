@@ -154,3 +154,7 @@ owner 지표의 최상위 `server`는 현재 보고서를 만든 서버의 배�
 서버는 원래 요청 이벤트를 구간별로 나누어 분자와 분모, p50과 p95를 계산한다. 이전 구간의 비율이나 백분위를 평균하지 않는다. 각 series point에 `interval_start/end`, `partial`, 전체/실패 외/실패 호출 수, `cache_samples`와 재사용 건수, `latency_samples`, `model_free_samples/count/measured`를 반환한다. 요청 없는 구간의 비율과 지연은 null을 유지해 실제 0회 또는 0%와 구분한다. API 작업은 요청과 완료 시점이 다를 수 있어 시도 수도 별도로 표시한다.
 
 요청량은 실패 외 호출과 실패의 누적 막대, 캐시 비율과 처리 시간은 점 차트다. 지연에는 2초 목표선을 표시한다. 카드 하단은 선택 기간의 표본, 툴팁은 해당 구간의 표본과 캐시 분자/분모를 표시한다. 표본 1건일 때는 p50과 p95가 같음을 안내한다. 캐시 비율은 서로 중복될 수 있어 누적하지 않는다. 시간은 서버 도구 실행 기준이며 프런트 LLM 생성과 왕복 통신은 포함하지 않는다.
+
+### Dashboard shell components
+
+The header uses the same shadcn/ui component source and design tokens as the charts: Radix Select, Button, Badge, Alert, Input and summary Cards. React renders the visible controls; hidden DOM controls bridge existing poll/filter handlers without exposing credentials. Cards retain their existing metric definitions. Owner credentials remain tab-memory only and the loopback proxy still keeps its owner key outside the browser.
